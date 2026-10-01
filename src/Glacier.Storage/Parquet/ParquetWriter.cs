@@ -175,8 +175,8 @@ public static class ParquetWriter
     private static ParquetType MapArrowTypeToParquet(ArrowTypeId typeId) => typeId switch
     {
         ArrowTypeId.Boolean => ParquetType.Boolean,
-        ArrowTypeId.Int8 or ArrowTypeId.UInt8 or ArrowTypeId.Int16 or ArrowTypeId.UInt16 or ArrowTypeId.Int32 or ArrowTypeId.UInt32 => ParquetType.Int32,
-        ArrowTypeId.Int64 or ArrowTypeId.UInt64 => ParquetType.Int64,
+        ArrowTypeId.Int8 or ArrowTypeId.UInt8 or ArrowTypeId.Int16 or ArrowTypeId.UInt16 or ArrowTypeId.Int32 or ArrowTypeId.UInt32 or ArrowTypeId.Date32 => ParquetType.Int32,
+        ArrowTypeId.Int64 or ArrowTypeId.UInt64 or ArrowTypeId.Date64 or ArrowTypeId.Timestamp or ArrowTypeId.Duration => ParquetType.Int64,
         ArrowTypeId.Float => ParquetType.Float,
         ArrowTypeId.Double => ParquetType.Double,
         ArrowTypeId.Utf8 or ArrowTypeId.Binary => ParquetType.ByteArray,

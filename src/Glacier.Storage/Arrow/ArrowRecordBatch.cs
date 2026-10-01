@@ -142,6 +142,8 @@ public sealed class ArrowRecordBatch
 {
     public ArrowSchema Schema { get; }
     public int RowCount { get; }
+    public int Length => RowCount;
+    public int ColumnCount => Columns.Count;
     public IReadOnlyList<ArrowColumn> Columns { get; }
 
     public ArrowRecordBatch(ArrowSchema schema, int rowCount, IEnumerable<ArrowColumn> columns)
