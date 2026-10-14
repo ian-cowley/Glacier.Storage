@@ -1,3 +1,5 @@
+![Glacier.Storage Banner](assets/banner.jpg)
+
 # 🗄️ Glacier.Storage
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
@@ -24,6 +26,10 @@
 ---
 
 ## 🏛️ System Architecture
+
+<p align="center">
+  <img src="assets/architecture.jpg" alt="Glacier.Storage Architecture Blueprint" width="100%" />
+</p>
 
 ```
                                 Glacier.Storage Pipeline
