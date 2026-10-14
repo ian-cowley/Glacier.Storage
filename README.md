@@ -209,5 +209,11 @@ Console.WriteLine($"Matched Node: {matchedNode} with Cosine Similarity: {score:F
 
 ---
 
+## Credits
+
+Developed by **Ian Cowley** and **Antigravity (Google DeepMind)**.
+
+---
+
 ## 📄 License
-This project is licensed under the [MIT License](LICENSE).
+This project is licensed under the [MIT License](LICENSE). Copyright (c) 2026 Ian Cowley.
