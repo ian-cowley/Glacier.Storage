@@ -6,6 +6,8 @@
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/)
 [![Native AOT](https://img.shields.io/badge/Native%20AOT-Ready-brightgreen.svg)](https://learn.microsoft.com/dotnet/core/deploying/native-aot/)
 [![Ecosystem](https://img.shields.io/badge/Glacier-Ecosystem-blue)](https://github.com/ian-cowley)
+[![Website](https://img.shields.io/badge/Website-glaciersoftware.dev-66fcf1.svg)](https://glaciersoftware.dev/)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support-orange.svg?logo=buy-me-a-coffee)](https://buymeacoffee.com/glaciersoftware)
 
 > **Pillar 12 of the Glacier .NET 10 Ecosystem**: Pure C# zero-allocation columnar Arrow IPC, vectorized Parquet, multi-tiered Clock-Pro buffer pool, transactional ACID WAL, and contiguous memory-mapped `.gdoc` binary format.
 > **Zero native dependencies (`e_sqlite3.dll` eliminated), zero third-party packages (`Apache.Arrow`, `Parquet.Net`, `Snappier` replaced with high-throughput managed implementations).**
@@ -217,3 +219,14 @@ Developed by **Ian Cowley** and **Antigravity (Google DeepMind)**.
 
 ## 📄 License
 This project is licensed under the [MIT License](LICENSE). Copyright (c) 2026 Ian Cowley.
+
+---
+
+## ❄️ Glacier Ecosystem & Support
+
+Part of the **[Glacier Ecosystem](https://glaciersoftware.dev/)** — high-performance, zero-allocation developer tooling and data engines natively built for modern C# and .NET 10.
+
+* 🌐 **Website & Documentation**: [glaciersoftware.dev](https://glaciersoftware.dev/)
+* ☕ **Buy Me a Coffee**: [buymeacoffee.com/glaciersoftware](https://buymeacoffee.com/glaciersoftware)
+* ❤️ **GitHub Sponsors**: [github.com/sponsors/ian-cowley](https://github.com/sponsors/ian-cowley)
+* 🐙 **All Repositories**: [github.com/ian-cowley](https://github.com/ian-cowley)
