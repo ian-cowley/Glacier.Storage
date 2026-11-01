@@ -10,7 +10,7 @@
     <IsAotCompatible>true</IsAotCompatible>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <PackageId>Glacier.Storage</PackageId>
-    <Version>1.0.1</Version>
+    <Version>1.0.2</Version>
     <Authors>Ian Cowley</Authors>
     <Company>Glacier High-Performance Ecosystem</Company>
     <Description>Pure C# .NET 10 zero-allocation columnar Arrow IPC, vectorized Parquet, Clock-Pro buffer pool, ACID WAL, and contiguous binary document engine.</Description>
