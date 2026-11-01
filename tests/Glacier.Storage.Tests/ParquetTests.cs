@@ -66,6 +66,30 @@ public class ParquetTests
     }
 
     [Theory]
+    [InlineData(65537)]
+    [InlineData(131072)]
+    [InlineData(524288)]
+    [InlineData(1048576)]
+    public void SnappyCodec_Roundtrip_LargeDataBeyond64Kb(int size)
+    {
+        byte[] original = new byte[size];
+        for (int i = 0; i < original.Length; i++)
+        {
+            original[i] = (byte)((i * 31 + (i >> 8)) & 0xFF);
+        }
+
+        byte[] compBuf = new byte[SnappyCodec.GetMaxCompressedLength(original.Length)];
+        int compLen = SnappyCodec.Compress(original, compBuf);
+        Assert.True(compLen > 0);
+
+        byte[] decompBuf = new byte[original.Length];
+        int decompLen = SnappyCodec.Decompress(compBuf.AsSpan(0, compLen), decompBuf);
+
+        Assert.Equal(original.Length, decompLen);
+        Assert.True(original.AsSpan().SequenceEqual(decompBuf));
+    }
+
+    [Theory]
     [InlineData(1)]
     [InlineData(2)]
     [InlineData(4)]

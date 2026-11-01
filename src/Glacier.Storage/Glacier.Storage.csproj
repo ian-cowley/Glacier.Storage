@@ -7,6 +7,8 @@
     <LangVersion>preview</LangVersion>
     <TieredPGO>true</TieredPGO>
     <ServerGarbageCollection>true</ServerGarbageCollection>
+    <IsAotCompatible>true</IsAotCompatible>
+    <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <PackageId>Glacier.Storage</PackageId>
     <Version>1.0.1</Version>
     <Authors>Ian Cowley</Authors>

@@ -78,9 +78,9 @@
 - **Rich Columnar Primitives**: Strongly-typed accessors for `int`, `long`, `float`, `double`, `bool`, `string`, `bytes`, and null bitmasks.
 
 ### 2. Vectorized Parquet Engine (`Glacier.Storage.Parquet`)
-- **Pure C# Thrift Compact Protocol**: Full Thrift parser for `FileMetaData`, `RowGroup`, `ColumnChunk`, and `PageHeader`.
+- **Pure C# Thrift Compact Protocol**: Full Thrift parser and writer for multi-`RowGroup` `FileMetaData`, `ColumnChunk`, and `PageHeader` files (`ParquetWriter.WriteFile` / `ParquetReader.ReadFile` / `TableStore.ExportToParquet`).
 - **Hardware Bit-Unpacking**: AVX-512 and Vector256 shift-and-mask bit-unpacking kernels achieving over 4.2 billion values per second.
-- **SIMD Snappy Compression**: Built-in Snappy compressor and decompressor with 64-bit unaligned memory copies sustaining >4,500 MB/sec.
+- **SIMD Snappy Compression**: Built-in Snappy compressor and decompressor with 64-bit unaligned memory copies, full multi-byte literal tags (`tag 60..63`) for large incompressible blocks, and strict bounds verification sustaining >4,500 MB/sec.
 - **Hybrid RLE & Bit-Packed**: Full support for Parquet dictionary encoding and variable bit-width integer runs (1 to 32 bits).
 
 ### 3. Slotted Multi-Tier Buffer Pool (`Glacier.Storage.BufferPool`)
@@ -91,9 +91,9 @@
 - **Slotted Page Directory**: Canonical variable-length tuple storage with slot directories and reverse payload allocation.
 
 ### 4. ACID Write-Ahead Log (`Glacier.Storage.Wal`)
-- **Transactional Group Commit**: Append-only circular ring with microsecond batch flushing and asynchronous notification (`CommitAsync`).
+- **Transactional Group Commit**: Append-only circular ring (dynamically scaling for `> 64 KB` Arrow IPC payloads) with microsecond batch flushing and asynchronous notification (`CommitAsync`).
 - **Hardware-Accelerated CRC32C**: Uses SSE4.2 (`_mm_crc32_u64`) and ARM64 intrinsics with software fallback for data integrity.
-- **Crash Recovery**: Automatically replays committed transactions, rolls back aborted/uncommitted transactions, and isolates torn writes.
+- **Crash Recovery & `TableStore` Replay**: Automatically replays committed Arrow IPC batch transactions into `TableStore`, rolls back aborted/uncommitted transactions cleanly, and isolates torn writes.
 
 ### 5. Contiguous Memory-Mapped Document Format (`Glacier.Storage.Doc`)
 - **Zero-Copy Binary Layout**: Contiguous binary `.gdoc` files containing Header (64 bytes), String Pool, AST Node Table (32-byte structs), Token Span Map (16-byte structs), and Dense Embedding Vectors (768-D / 1536-D).
@@ -207,7 +207,7 @@ Console.WriteLine($"Matched Node: {matchedNode} with Cosine Similarity: {score:F
 ## 🔒 Security & Quality Standards
 - **Zero Native Dependencies**: 100% managed C# .NET 10 code, Native AOT trim-safe, with zero external NuGet packages.
 - **Zero Secrets Policy**: Fully compliant with `AGENTS.md`. Automated verification via `python scripts/security_check.py Glacier.Storage`.
-- **100% Unit Test Pass Rate**: 29 unit tests covering roundtrip streaming, bit-unpacking, buffer pool eviction, ACID recovery, and `.gdoc` memory-mapped traversal.
+- **100% Unit Test Pass Rate**: 37 unit and adversarial tests covering multi-RowGroup Parquet streaming, large incompressible Snappy blocks and malformed-input bounds, bit-unpacking, buffer pool eviction, ACID Arrow IPC WAL crash recovery/rollback, and `.gdoc` memory-mapped traversal.
 
 ---
 

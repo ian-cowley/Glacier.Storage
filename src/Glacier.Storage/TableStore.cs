@@ -1,7 +1,6 @@
 namespace Glacier.Storage;
 
 using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
@@ -21,6 +20,7 @@ public sealed class TableStore : IDisposable
     private readonly IBufferPool _bufferPool;
     private readonly IWalTransactionEngine _wal;
     private readonly List<ArrowRecordBatch> _batches = new();
+    private readonly Dictionary<TxId, List<ArrowRecordBatch>> _pendingTxBatches = new();
     private readonly object _sync = new();
     private bool _isDisposed;
 
@@ -46,7 +46,31 @@ public sealed class TableStore : IDisposable
         {
             string walPath = Path.Combine(_tableDirectory, "table.wal");
             var walStream = new FileStream(walPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
+            if (walStream.Length > 0)
+            {
+                ReplayCommittedWalRecords(walStream);
+                walStream.Seek(0, SeekOrigin.End);
+            }
             _wal = new WalTransactionEngine(walStream);
+        }
+    }
+
+    private void ReplayCommittedWalRecords(Stream walStream)
+    {
+        var recovery = WalRecovery.Recover(walStream);
+        foreach (var record in recovery.CommittedRecords)
+        {
+            if (record.Payload.Length <= 8)
+            {
+                continue;
+            }
+
+            using var ms = new MemoryStream(record.Payload.ToArray(), writable: false);
+            using var reader = new ArrowStreamReader(ms);
+            while (reader.ReadNextRecordBatch() is { } recoveredBatch)
+            {
+                _batches.Add(recoveredBatch);
+            }
         }
     }
 
@@ -55,27 +79,52 @@ public sealed class TableStore : IDisposable
     public void AppendBatch(TxId txId, ArrowRecordBatch batch)
     {
         ObjectDisposedException.ThrowIf(_isDisposed, this);
+        ArgumentNullException.ThrowIfNull(batch);
+
+        using var ipcMs = new MemoryStream();
+        using (var ipcWriter = new ArrowStreamWriter(ipcMs, leaveOpen: true))
+        {
+            ipcWriter.WriteSchema(_schema);
+            ipcWriter.WriteRecordBatch(batch);
+            ipcWriter.WriteEndOfStream();
+        }
+
+        _wal.LogRecord(txId, ipcMs.GetBuffer().AsSpan(0, (int)ipcMs.Length));
 
         lock (_sync)
         {
             _batches.Add(batch);
+            if (!_pendingTxBatches.TryGetValue(txId, out var list))
+            {
+                list = new List<ArrowRecordBatch>(1);
+                _pendingTxBatches[txId] = list;
+            }
+            list.Add(batch);
         }
-
-        // Log append in WAL
-        Span<byte> payload = stackalloc byte[8];
-        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(payload[..4], batch.RowCount);
-        System.Buffers.Binary.BinaryPrimitives.WriteInt32LittleEndian(payload.Slice(4, 4), batch.Columns.Count);
-        _wal.LogRecord(txId, payload);
     }
 
     public async ValueTask CommitTransactionAsync(TxId txId)
     {
         await _wal.CommitAsync(txId).ConfigureAwait(false);
+        lock (_sync)
+        {
+            _pendingTxBatches.Remove(txId);
+        }
     }
 
     public void RollbackTransaction(TxId txId)
     {
         _wal.Rollback(txId);
+        lock (_sync)
+        {
+            if (_pendingTxBatches.Remove(txId, out var rolledBack))
+            {
+                foreach (var b in rolledBack)
+                {
+                    _batches.Remove(b);
+                }
+            }
+        }
     }
 
     public void ExportToParquet(string filePath, CompressionCodec codec = CompressionCodec.Snappy)
@@ -83,8 +132,7 @@ public sealed class TableStore : IDisposable
         lock (_sync)
         {
             if (_batches.Count == 0) return;
-            // Write first batch or combined batch
-            ParquetWriter.WriteFile(filePath, _batches[0], codec);
+            ParquetWriter.WriteFile(filePath, _batches, codec);
         }
     }
 

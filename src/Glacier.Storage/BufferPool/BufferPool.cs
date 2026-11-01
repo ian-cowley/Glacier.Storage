@@ -41,14 +41,15 @@ public sealed unsafe class BufferPool : IBufferPool
         _policy = policy ?? new ClockProPolicy(poolSize);
         _fileStream = fileStream;
 
-        nuint totalBytes = (nuint)(_poolSize * _pageSize);
+        long totalBytesSigned = checked((long)_poolSize * _pageSize);
+        nuint totalBytes = checked((nuint)totalBytesSigned);
         _memoryBlock = (byte*)NativeMemory.AlignedAlloc(totalBytes, 64);
         NativeMemory.Clear(_memoryBlock, totalBytes);
 
         _frames = new BufferFrame[_poolSize];
         for (int i = 0; i < _poolSize; i++)
         {
-            byte* framePtr = _memoryBlock + (i * _pageSize);
+            byte* framePtr = _memoryBlock + ((long)i * _pageSize);
             _frames[i] = new BufferFrame(i, framePtr, _pageSize);
         }
 

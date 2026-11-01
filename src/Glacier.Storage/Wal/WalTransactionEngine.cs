@@ -100,6 +100,27 @@ public sealed class WalTransactionEngine : IWalTransactionEngine
                 FlushActiveBufferLocked();
             }
 
+            if (recordSize > _bufferCapacity)
+            {
+                byte[] largeBuf = System.Buffers.ArrayPool<byte>.Shared.Rent(recordSize);
+                try
+                {
+                    WalRecord.Serialize(lsn, txId, type, payload, largeBuf.AsSpan(0, recordSize));
+                    lock (_flushLock)
+                    {
+                        _logStream.Write(largeBuf, 0, recordSize);
+                        _logStream.Flush();
+                        Volatile.Write(ref _flushedLsn, lsn);
+                        NotifyPendingCommits(lsn);
+                    }
+                }
+                finally
+                {
+                    System.Buffers.ArrayPool<byte>.Shared.Return(largeBuf);
+                }
+                return lsn;
+            }
+
             Span<byte> dest = _activeBuffer.AsSpan(_activeBufferOffset, recordSize);
             WalRecord.Serialize(lsn, txId, type, payload, dest);
             _activeBufferOffset += recordSize;

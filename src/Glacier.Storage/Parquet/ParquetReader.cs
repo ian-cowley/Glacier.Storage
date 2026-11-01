@@ -5,7 +5,6 @@ using System.Buffers.Binary;
 using System.Collections.Generic;
 using System.IO;
 using System.Runtime.InteropServices;
-using System.Text;
 using Glacier.Storage.Arrow;
 
 public static class ParquetReader
@@ -68,13 +67,11 @@ public static class ParquetReader
 
         if (fileMeta.RowGroups.Count == 0 || fileMeta.Schema.Count <= 1)
         {
-            // Empty schema/batch
             return new ArrowRecordBatch(new ArrowSchema([]), 0, []);
         }
 
         // 4. Construct ArrowSchema from Parquet SchemaElements
-        var fields = new List<ArrowField>();
-        // First element is root schema
+        var fields = new List<ArrowField>(fileMeta.Schema.Count - 1);
         for (int i = 1; i < fileMeta.Schema.Count; i++)
         {
             var elem = fileMeta.Schema[i];
@@ -84,65 +81,177 @@ public static class ParquetReader
         }
 
         var schema = new ArrowSchema(fields);
-        int totalRows = (int)fileMeta.NumRows;
+        int totalRows = checked((int)fileMeta.NumRows);
 
-        // 5. Read row group columns
-        var firstRg = fileMeta.RowGroups[0];
-        var columns = new List<ArrowColumn>(fields.Count);
-
-        for (int i = 0; i < firstRg.Columns.Count && i < fields.Count; i++)
+        // Fast path: single RowGroup
+        if (fileMeta.RowGroups.Count == 1)
         {
-            var chunk = firstRg.Columns[i];
-            var colMeta = chunk.MetaData;
-            if (colMeta == null) continue;
+            var rg = fileMeta.RowGroups[0];
+            int rgRows = checked((int)rg.NumRows);
+            var singleCols = new List<ArrowColumn>(fields.Count);
 
-            stream.Seek(colMeta.DataPageOffset, SeekOrigin.Begin);
-            var pageHeader = ParquetThriftCodec.ReadPageHeader(new ThriftCompactReader(stream));
-
-            byte[] pageBytes = new byte[pageHeader.CompressedPageSize];
-            stream.ReadExactly(pageBytes);
-
-            byte[] uncompressedBytes;
-            if (colMeta.Codec == CompressionCodec.Snappy)
+            for (int colIdx = 0; colIdx < rg.Columns.Count && colIdx < fields.Count; colIdx++)
             {
-                uncompressedBytes = new byte[pageHeader.UncompressedPageSize];
-                SnappyCodec.Decompress(pageBytes, uncompressedBytes);
+                byte[] uncompressedBytes = ReadUncompressedPageBytes(stream, rg.Columns[colIdx]);
+                singleCols.Add(DecodeColumnData(fields[colIdx], rgRows, uncompressedBytes));
+            }
+
+            return new ArrowRecordBatch(schema, rgRows, singleCols);
+        }
+
+        // Multi-RowGroup path: decode all RowGroups so multi-batch exports never drop rows
+        var columns = new List<ArrowColumn>(fields.Count);
+        for (int colIdx = 0; colIdx < fields.Count; colIdx++)
+        {
+            var field = fields[colIdx];
+            if (field.DataType.Id is ArrowTypeId.Utf8 or ArrowTypeId.Binary)
+            {
+                var offsets = new int[totalRows + 1];
+                using var dataMs = new MemoryStream();
+                int rowCursor = 0;
+
+                foreach (var rg in fileMeta.RowGroups)
+                {
+                    int rgRows = checked((int)rg.NumRows);
+                    byte[] pageBytes = ReadUncompressedPageBytes(stream, rg.Columns[colIdx]);
+                    AppendPlainByteArrayPage(pageBytes, rgRows, offsets, ref rowCursor, dataMs);
+                }
+                offsets[totalRows] = (int)dataMs.Position;
+
+                byte[] offsetsBytes = MemoryMarshal.AsBytes(offsets.AsSpan()).ToArray();
+                columns.Add(new ArrowColumn(field, totalRows, 0, ReadOnlyMemory<byte>.Empty, offsetsBytes, dataMs.ToArray()));
+            }
+            else if (field.DataType.Id == ArrowTypeId.Boolean)
+            {
+                byte[] combinedBits = new byte[(totalRows + 7) / 8];
+                int rowCursor = 0;
+
+                foreach (var rg in fileMeta.RowGroups)
+                {
+                    int rgRows = checked((int)rg.NumRows);
+                    byte[] pageBytes = ReadUncompressedPageBytes(stream, rg.Columns[colIdx]);
+                    int neededBytes = (rgRows + 7) / 8;
+                    if (pageBytes.Length < neededBytes)
+                    {
+                        throw new InvalidDataException("Truncated Parquet boolean data page.");
+                    }
+
+                    for (int r = 0; r < rgRows; r++)
+                    {
+                        bool bit = (pageBytes[r >> 3] & (1 << (r & 7))) != 0;
+                        if (bit)
+                        {
+                            combinedBits[rowCursor >> 3] |= (byte)(1 << (rowCursor & 7));
+                        }
+                        rowCursor++;
+                    }
+                }
+
+                columns.Add(new ArrowColumn(field, totalRows, 0, ReadOnlyMemory<byte>.Empty, ReadOnlyMemory<byte>.Empty, combinedBits));
             }
             else
             {
-                uncompressedBytes = pageBytes;
-            }
+                int elemWidth = field.DataType.ByteWidth;
+                byte[] combined = new byte[checked(totalRows * elemWidth)];
+                int dstByteOffset = 0;
 
-            // Decode column data
-            var field = fields[i];
-            var col = DecodeColumnData(field, totalRows, uncompressedBytes);
-            columns.Add(col);
+                foreach (var rg in fileMeta.RowGroups)
+                {
+                    int rgRows = checked((int)rg.NumRows);
+                    int byteCount = checked(rgRows * elemWidth);
+                    byte[] pageBytes = ReadUncompressedPageBytes(stream, rg.Columns[colIdx]);
+                    if (pageBytes.Length < byteCount)
+                    {
+                        throw new InvalidDataException("Truncated Parquet fixed-width data page.");
+                    }
+
+                    Buffer.BlockCopy(pageBytes, 0, combined, dstByteOffset, byteCount);
+                    dstByteOffset += byteCount;
+                }
+
+                columns.Add(new ArrowColumn(field, totalRows, 0, ReadOnlyMemory<byte>.Empty, ReadOnlyMemory<byte>.Empty, combined));
+            }
         }
 
         return new ArrowRecordBatch(schema, totalRows, columns);
+    }
+
+    private static byte[] ReadUncompressedPageBytes(Stream stream, ColumnChunk chunk)
+    {
+        var colMeta = chunk.MetaData ?? throw new InvalidDataException("Missing Parquet ColumnMetaData.");
+        if (colMeta.DataPageOffset < 4 || colMeta.DataPageOffset >= stream.Length)
+        {
+            throw new InvalidDataException("Invalid Parquet DataPageOffset.");
+        }
+
+        stream.Seek(colMeta.DataPageOffset, SeekOrigin.Begin);
+        var pageHeader = ParquetThriftCodec.ReadPageHeader(new ThriftCompactReader(stream));
+        if (pageHeader.CompressedPageSize < 0 || pageHeader.UncompressedPageSize < 0)
+        {
+            throw new InvalidDataException("Invalid negative Parquet page size.");
+        }
+
+        byte[] pageBytes = new byte[pageHeader.CompressedPageSize];
+        stream.ReadExactly(pageBytes);
+
+        if (colMeta.Codec == CompressionCodec.Snappy)
+        {
+            byte[] uncompressedBytes = new byte[pageHeader.UncompressedPageSize];
+            int decompressedLen = SnappyCodec.Decompress(pageBytes, uncompressedBytes);
+            if (decompressedLen != pageHeader.UncompressedPageSize)
+            {
+                throw new InvalidDataException(
+                    $"Parquet Snappy page size mismatch: expected {pageHeader.UncompressedPageSize} bytes, decoded {decompressedLen} bytes.");
+            }
+            return uncompressedBytes;
+        }
+
+        if (colMeta.Codec == CompressionCodec.Uncompressed)
+        {
+            if (pageBytes.Length != pageHeader.UncompressedPageSize)
+            {
+                throw new InvalidDataException("Uncompressed Parquet page size mismatch.");
+            }
+            return pageBytes;
+        }
+
+        throw new NotSupportedException($"Unsupported Parquet compression codec '{colMeta.Codec}'.");
+    }
+
+    private static void AppendPlainByteArrayPage(byte[] uncompressedBytes, int numValues, int[] offsets, ref int rowCursor, MemoryStream dataMs)
+    {
+        int srcOffset = 0;
+        for (int i = 0; i < numValues; i++)
+        {
+            if (srcOffset + 4 > uncompressedBytes.Length)
+            {
+                throw new InvalidDataException("Truncated PLAIN ByteArray length prefix in Parquet page.");
+            }
+
+            int len = BinaryPrimitives.ReadInt32LittleEndian(uncompressedBytes.AsSpan(srcOffset, 4));
+            srcOffset += 4;
+            if (len < 0 || srcOffset + len > uncompressedBytes.Length)
+            {
+                throw new InvalidDataException("Invalid PLAIN ByteArray element length in Parquet page.");
+            }
+
+            offsets[rowCursor++] = (int)dataMs.Position;
+            if (len > 0)
+            {
+                dataMs.Write(uncompressedBytes, srcOffset, len);
+                srcOffset += len;
+            }
+        }
     }
 
     private static ArrowColumn DecodeColumnData(ArrowField field, int numValues, byte[] uncompressedBytes)
     {
         if (field.DataType.Id == ArrowTypeId.Utf8 || field.DataType.Id == ArrowTypeId.Binary)
         {
-            // Parse PLAIN ByteArray: series of [length: int32] [utf8 bytes]
             var offsets = new int[numValues + 1];
             using var dataMs = new MemoryStream();
-            int srcOffset = 0;
-
-            for (int i = 0; i < numValues && srcOffset < uncompressedBytes.Length; i++)
-            {
-                int len = BinaryPrimitives.ReadInt32LittleEndian(uncompressedBytes.AsSpan(srcOffset, 4));
-                srcOffset += 4;
-                offsets[i] = (int)dataMs.Position;
-
-                if (len > 0 && srcOffset + len <= uncompressedBytes.Length)
-                {
-                    dataMs.Write(uncompressedBytes, srcOffset, len);
-                    srcOffset += len;
-                }
-            }
+            int rowCursor = 0;
+            AppendPlainByteArrayPage(uncompressedBytes, numValues, offsets, ref rowCursor, dataMs);
             offsets[numValues] = (int)dataMs.Position;
 
             byte[] offsetsBytes = MemoryMarshal.AsBytes(offsets.AsSpan()).ToArray();
@@ -150,9 +259,22 @@ public static class ParquetReader
 
             return new ArrowColumn(field, numValues, 0, ReadOnlyMemory<byte>.Empty, offsetsBytes, dataBytes);
         }
+        else if (field.DataType.Id == ArrowTypeId.Boolean)
+        {
+            int neededBytes = (numValues + 7) / 8;
+            if (uncompressedBytes.Length < neededBytes)
+            {
+                throw new InvalidDataException("Truncated Parquet boolean column page.");
+            }
+            return new ArrowColumn(field, numValues, 0, ReadOnlyMemory<byte>.Empty, ReadOnlyMemory<byte>.Empty, uncompressedBytes);
+        }
         else
         {
-            // Direct memory blit
+            int neededBytes = checked(numValues * field.DataType.ByteWidth);
+            if (uncompressedBytes.Length < neededBytes)
+            {
+                throw new InvalidDataException("Truncated Parquet fixed-width column page.");
+            }
             return new ArrowColumn(field, numValues, 0, ReadOnlyMemory<byte>.Empty, ReadOnlyMemory<byte>.Empty, uncompressedBytes);
         }
     }
