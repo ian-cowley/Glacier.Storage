@@ -34,9 +34,9 @@ jobs:
       - name: Wait for upstream NuGet packages to be available
         run: |
           elapsed=0
-          until dotnet restore --no-cache > /dev/null 2>&1; do
+          until dotnet restore tests/Glacier.Storage.Tests/Glacier.Storage.Tests.csproj --no-cache > /dev/null 2>&1; do
             if [ $elapsed -ge 1200 ]; then
-              dotnet restore --no-cache
+              dotnet restore tests/Glacier.Storage.Tests/Glacier.Storage.Tests.csproj --no-cache
               exit 1
             fi
             echo "Waiting for upstream NuGet packages to index (${elapsed}s elapsed)..."
@@ -45,7 +45,7 @@ jobs:
           done
 
       - name: Build
-        run: dotnet build --configuration Release --no-restore
+        run: dotnet build tests/Glacier.Storage.Tests/Glacier.Storage.Tests.csproj --configuration Release --no-restore
 
       - name: Run tests
         run: |
