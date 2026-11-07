@@ -2,7 +2,7 @@ namespace Glacier.Storage.Benchmarks;
 
 using System;
 using BenchmarkDotNet.Attributes;
-using Glacier.Storage.Parquet;
+using Glacier.Formats.Parquet;
 
 [MemoryDiagnoser]
 public class ParquetBitUnpackBenchmark

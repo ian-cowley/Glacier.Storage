@@ -4,7 +4,7 @@ using System;
 using System.IO;
 using System.Runtime.InteropServices;
 using BenchmarkDotNet.Attributes;
-using Glacier.Storage.Arrow;
+using Glacier.Formats.Arrow;
 
 [MemoryDiagnoser]
 public class ArrowIpcBenchmarks

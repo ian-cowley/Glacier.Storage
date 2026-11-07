@@ -4,9 +4,9 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 using System.Threading.Tasks;
-using Glacier.Storage.Arrow;
+using Glacier.Formats.Arrow;
 using Glacier.Storage.BufferPool;
-using Glacier.Storage.Parquet;
+using Glacier.Formats.Parquet;
 using Glacier.Storage.Wal;
 
 /// <summary>

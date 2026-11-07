@@ -7,3 +7,9 @@ BenchmarkDotNet.Artifacts/
 TestResults/
 *.log
 *.tmp
+
+packages/
+appsettings*.json
+!appsettings.template.json
+*.env*
+!.env.example

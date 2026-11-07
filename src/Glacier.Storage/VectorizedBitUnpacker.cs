@@ -57,8 +57,21 @@ public static class VectorizedBitUnpacker
             return;
         }
 
-        // Generic 64-bit bit-slicing engine
-        UnpackGeneric(packed, bitWidth, destination);
+        // FastLanes SIMD accelerated path for 16-element chunks
+        int lanes16 = destination.Length & ~15;
+        int sliceByteLen = bitWidth * 2;
+        int byteOffset = 0;
+        int i = 0;
+
+        for (; i < lanes16 && (byteOffset + sliceByteLen) <= packed.Length; i += 16, byteOffset += sliceByteLen)
+        {
+            Glacier.Storage.Encoding.FastLanesBitUnpacker.Unpack16(packed.Slice(byteOffset), destination.Slice(i, 16), bitWidth);
+        }
+
+        if (i < destination.Length)
+        {
+            UnpackGeneric(packed.Slice(byteOffset), bitWidth, destination.Slice(i));
+        }
     }
 
     [MethodImpl(MethodImplOptions.AggressiveInlining)]

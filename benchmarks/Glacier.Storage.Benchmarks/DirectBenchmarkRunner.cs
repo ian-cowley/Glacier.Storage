@@ -4,10 +4,10 @@ using System;
 using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
-using Glacier.Storage.Arrow;
+using Glacier.DocTree.GDoc;
+using Glacier.Formats.Arrow;
+using Glacier.Formats.Parquet;
 using Glacier.Storage.BufferPool;
-using Glacier.Storage.Doc;
-using Glacier.Storage.Parquet;
 using Glacier.Storage.Wal;
 
 public static class DirectBenchmarkRunner

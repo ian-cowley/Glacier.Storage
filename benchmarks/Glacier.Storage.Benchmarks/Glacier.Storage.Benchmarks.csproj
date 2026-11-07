@@ -16,5 +16,13 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Glacier.Storage\Glacier.Storage.csproj" />
   </ItemGroup>
+  <ItemGroup Condition="Exists('../../../Glacier.Formats/src/Glacier.Formats/Glacier.Formats.csproj') and '$(UseLocalProjectReferences)' != 'false'">
+    <ProjectReference Include="../../../Glacier.Formats/src/Glacier.Formats/Glacier.Formats.csproj" />
+    <ProjectReference Include="../../../Glacier.DocTree/src/Glacier.DocTree/Glacier.DocTree.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="!Exists('../../../Glacier.Formats/src/Glacier.Formats/Glacier.Formats.csproj') or '$(UseLocalProjectReferences)' == 'false'">
+    <PackageReference Include="Glacier.Formats" Version="1.0.0" />
+    <PackageReference Include="Glacier.DocTree" Version="1.2.0" />
+  </ItemGroup>
 
 </Project>

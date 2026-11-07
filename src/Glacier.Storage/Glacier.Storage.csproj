@@ -10,19 +10,29 @@
     <IsAotCompatible>true</IsAotCompatible>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <PackageId>Glacier.Storage</PackageId>
-    <Version>1.0.2</Version>
+    <Version>1.1.0</Version>
     <Authors>Ian Cowley</Authors>
     <Company>Glacier High-Performance Ecosystem</Company>
-    <Description>Pure C# .NET 10 zero-allocation columnar Arrow IPC, vectorized Parquet, Clock-Pro buffer pool, ACID WAL, and contiguous binary document engine.</Description>
+    <Description>Pure C# .NET 10 zero-allocation ACID database engine kernel with Clock-Pro buffer pool, write-ahead logging (WAL), slotted page storage, and table store.</Description>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/ian-cowley/Glacier.Storage</PackageProjectUrl>
     <RepositoryUrl>https://github.com/ian-cowley/Glacier.Storage.git</RepositoryUrl>
     <RepositoryType>git</RepositoryType>
-    <PackageTags>storage;parquet;arrow;ipc;buffer-pool;wal;clock-pro;columnar;database;net10;glacier</PackageTags>
+    <PackageTags>storage;buffer-pool;wal;clock-pro;slotted-page;tablestore;database;kernel;net10;glacier</PackageTags>
     <PackageReadmeFile>README.md</PackageReadmeFile>
   </PropertyGroup>
 
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+  <ItemGroup Condition="Exists('../../../Glacier.Formats/src/Glacier.Formats/Glacier.Formats.csproj') and '$(UseLocalProjectReferences)' != 'false'">
+    <ProjectReference Include="../../../Glacier.Formats/src/Glacier.Formats/Glacier.Formats.csproj" />
+  </ItemGroup>
+  <ItemGroup Condition="!Exists('../../../Glacier.Formats/src/Glacier.Formats/Glacier.Formats.csproj') or '$(UseLocalProjectReferences)' == 'false'">
+    <PackageReference Include="Glacier.Formats" Version="1.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="Glacier.Storage.Tests" />
   </ItemGroup>
 </Project>

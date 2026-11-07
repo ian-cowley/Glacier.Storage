@@ -5,8 +5,8 @@ using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading.Tasks;
 using Glacier.Storage;
-using Glacier.Storage.Arrow;
-using Glacier.Storage.Parquet;
+using Glacier.Formats.Arrow;
+using Glacier.Formats.Parquet;
 using Xunit;
 
 public class TableStoreTests

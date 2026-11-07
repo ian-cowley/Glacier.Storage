@@ -5,7 +5,7 @@ using System.IO;
 using BenchmarkDotNet.Attributes;
 using Glacier.Storage;
 using Glacier.Storage.BufferPool;
-using Glacier.Storage.Doc;
+using Glacier.DocTree.GDoc;
 using Glacier.Storage.Wal;
 
 [MemoryDiagnoser]

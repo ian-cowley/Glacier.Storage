@@ -7,8 +7,8 @@ using System.Security.Cryptography;
 using System.Text;
 using System.Threading.Tasks;
 using Glacier.Storage;
-using Glacier.Storage.Arrow;
-using Glacier.Storage.Parquet;
+using Glacier.Formats.Arrow;
+using Glacier.Formats.Parquet;
 using Xunit;
 
 public class TrackAStorageAdversarialTests
