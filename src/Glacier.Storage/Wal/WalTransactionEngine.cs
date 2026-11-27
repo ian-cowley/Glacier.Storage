@@ -31,11 +31,20 @@ public sealed class WalTransactionEngine : IWalTransactionEngine
     public ulong CurrentLsn => Volatile.Read(ref _currentLsn);
     public ulong FlushedLsn => Volatile.Read(ref _flushedLsn);
 
-    public WalTransactionEngine(Stream logStream, int bufferCapacity = 65536, int groupCommitIntervalMs = 5, bool leaveOpen = false)
+    public WalTransactionEngine(
+        Stream logStream,
+        int bufferCapacity = 65536,
+        int groupCommitIntervalMs = 5,
+        bool leaveOpen = false,
+        ulong initialLsn = 0,
+        ulong initialTxId = 0)
     {
         _logStream = logStream ?? throw new ArgumentNullException(nameof(logStream));
         _bufferCapacity = Math.Max(4096, bufferCapacity);
         _leaveOpen = leaveOpen;
+        _currentLsn = initialLsn;
+        _flushedLsn = initialLsn;
+        _nextTxId = initialTxId;
         _activeBuffer = new byte[_bufferCapacity];
         _flushBuffer = new byte[_bufferCapacity];
         _groupCommitTimer = new Timer(_ => FlushInternal(), null, groupCommitIntervalMs, groupCommitIntervalMs);
@@ -109,7 +118,7 @@ public sealed class WalTransactionEngine : IWalTransactionEngine
                     lock (_flushLock)
                     {
                         _logStream.Write(largeBuf, 0, recordSize);
-                        _logStream.Flush();
+                        FlushStreamToDisk();
                         Volatile.Write(ref _flushedLsn, lsn);
                         NotifyPendingCommits(lsn);
                     }
@@ -140,12 +149,25 @@ public sealed class WalTransactionEngine : IWalTransactionEngine
             _activeBufferOffset = 0;
 
             _logStream.Write(_flushBuffer, 0, bytesToWrite);
-            _logStream.Flush();
+            FlushStreamToDisk();
 
             ulong flushed = Volatile.Read(ref _currentLsn);
             Volatile.Write(ref _flushedLsn, flushed);
 
             NotifyPendingCommits(flushed);
+        }
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    private void FlushStreamToDisk()
+    {
+        if (_logStream is FileStream fs)
+        {
+            fs.Flush(flushToDisk: true);
+        }
+        else
+        {
+            _logStream.Flush();
         }
     }
 

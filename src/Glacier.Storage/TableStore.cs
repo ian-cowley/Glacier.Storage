@@ -46,16 +46,18 @@ public sealed class TableStore : IDisposable
         {
             string walPath = Path.Combine(_tableDirectory, "table.wal");
             var walStream = new FileStream(walPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
+            ulong initialLsn = 0;
+            ulong initialTxId = 0;
             if (walStream.Length > 0)
             {
-                ReplayCommittedWalRecords(walStream);
+                (initialLsn, initialTxId) = ReplayCommittedWalRecords(walStream);
                 walStream.Seek(0, SeekOrigin.End);
             }
-            _wal = new WalTransactionEngine(walStream);
+            _wal = new WalTransactionEngine(walStream, initialLsn: initialLsn, initialTxId: initialTxId);
         }
     }
 
-    private void ReplayCommittedWalRecords(Stream walStream)
+    private (ulong MaxLsn, ulong MaxTxId) ReplayCommittedWalRecords(Stream walStream)
     {
         var recovery = WalRecovery.Recover(walStream);
         foreach (var record in recovery.CommittedRecords)
@@ -72,6 +74,7 @@ public sealed class TableStore : IDisposable
                 _batches.Add(recoveredBatch);
             }
         }
+        return (recovery.MaxLsn, recovery.MaxTxId);
     }
 
     public TxId BeginTransaction() => _wal.BeginTransaction();
@@ -93,7 +96,6 @@ public sealed class TableStore : IDisposable
 
         lock (_sync)
         {
-            _batches.Add(batch);
             if (!_pendingTxBatches.TryGetValue(txId, out var list))
             {
                 list = new List<ArrowRecordBatch>(1);
@@ -108,7 +110,10 @@ public sealed class TableStore : IDisposable
         await _wal.CommitAsync(txId).ConfigureAwait(false);
         lock (_sync)
         {
-            _pendingTxBatches.Remove(txId);
+            if (_pendingTxBatches.Remove(txId, out var committed))
+            {
+                _batches.AddRange(committed);
+            }
         }
     }
 
@@ -117,13 +122,7 @@ public sealed class TableStore : IDisposable
         _wal.Rollback(txId);
         lock (_sync)
         {
-            if (_pendingTxBatches.Remove(txId, out var rolledBack))
-            {
-                foreach (var b in rolledBack)
-                {
-                    _batches.Remove(b);
-                }
-            }
+            _pendingTxBatches.Remove(txId);
         }
     }
 

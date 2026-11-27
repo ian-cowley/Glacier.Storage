@@ -10,7 +10,8 @@
     <IsAotCompatible>true</IsAotCompatible>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
     <PackageId>Glacier.Storage</PackageId>
-    <Version>1.1.0</Version>
+    <Version>1.1.1</Version>
+    <PackageReleaseNotes>v1.1.1: Updated Glacier.Formats 1.0.1 dependency and WAL/BufferPool durability fixes.</PackageReleaseNotes>
     <Authors>Ian Cowley</Authors>
     <Company>Glacier High-Performance Ecosystem</Company>
     <Description>Pure C# .NET 10 zero-allocation ACID database engine kernel with Clock-Pro buffer pool, write-ahead logging (WAL), slotted page storage, and table store.</Description>
@@ -29,7 +30,7 @@
     <ProjectReference Include="../../../Glacier.Formats/src/Glacier.Formats/Glacier.Formats.csproj" />
   </ItemGroup>
   <ItemGroup Condition="!Exists('../../../Glacier.Formats/src/Glacier.Formats/Glacier.Formats.csproj') or '$(UseLocalProjectReferences)' == 'false'">
-    <PackageReference Include="Glacier.Formats" Version="1.0.0" />
+    <PackageReference Include="Glacier.Formats" Version="1.0.1" />
   </ItemGroup>
 
   <ItemGroup>

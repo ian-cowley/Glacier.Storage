@@ -24,6 +24,11 @@ public static class SlottedPage
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Initialize(Span<byte> page, PageId pageId)
     {
+        if (page.Length < HeaderSize || page.Length > ushort.MaxValue)
+        {
+            throw new ArgumentOutOfRangeException(nameof(page), $"SlottedPage supports page sizes from {HeaderSize} to {ushort.MaxValue} bytes (got {page.Length}).");
+        }
+
         BinaryPrimitives.WriteInt32LittleEndian(page[..4], pageId.FileId);
         BinaryPrimitives.WriteInt32LittleEndian(page.Slice(4, 4), pageId.PageNumber);
         BinaryPrimitives.WriteUInt16LittleEndian(page.Slice(8, 2), 0); // SlotCount = 0

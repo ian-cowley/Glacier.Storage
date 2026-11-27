@@ -7,6 +7,7 @@ using System.IO;
 public sealed class WalRecoveryResult
 {
     public ulong MaxLsn { get; set; }
+    public ulong MaxTxId { get; set; }
     public HashSet<TxId> CommittedTransactions { get; set; } = new();
     public HashSet<TxId> AbortedTransactions { get; set; } = new();
     public List<WalRecord> CommittedRecords { get; set; } = new();
@@ -34,6 +35,7 @@ public static class WalRecovery
         var txStatus = new Dictionary<TxId, WalRecordType>();
         int offset = 0;
         ulong maxLsn = 0;
+        ulong maxTxId = 0;
 
         while (offset < span.Length)
         {
@@ -49,6 +51,10 @@ public static class WalRecovery
             if (record.Lsn > maxLsn)
             {
                 maxLsn = record.Lsn;
+            }
+            if (record.TxId.Value > maxTxId)
+            {
+                maxTxId = record.TxId.Value;
             }
 
             if (record.Type == WalRecordType.Commit)
@@ -68,6 +74,7 @@ public static class WalRecovery
         }
 
         result.MaxLsn = maxLsn;
+        result.MaxTxId = maxTxId;
 
         // Any transaction without a Commit is treated as aborted/uncommitted
         foreach (var kvp in txStatus)
