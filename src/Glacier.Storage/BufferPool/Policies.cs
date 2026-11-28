@@ -3,10 +3,22 @@ namespace Glacier.Storage.BufferPool;
 using System;
 using System.Collections.Generic;
 
+/// <summary>
+/// Page replacement policy interface for selecting eviction victims in a <see cref="BufferPool"/>.
+/// </summary>
 public interface IPageReplacementPolicy
 {
+    /// <summary>Records an access or initial load of <paramref name="frame"/>.</summary>
+    /// <param name="frame">The accessed frame.</param>
     void RecordAccess(BufferFrame frame);
+
+    /// <summary>Selects the index of an evictable victim frame, or <c>-1</c> if all frames are pinned.</summary>
+    /// <param name="frames">All frames in the buffer pool.</param>
+    /// <returns>The selected frame index, or <c>-1</c> when no frame can be evicted.</returns>
     int SelectVictim(BufferFrame[] frames);
+
+    /// <summary>Updates replacement policy metadata when <paramref name="frame"/> is evicted.</summary>
+    /// <param name="frame">The evicted frame.</param>
     void OnEvict(BufferFrame frame);
 }
 
@@ -31,6 +43,10 @@ public sealed class ClockProPolicy : IPageReplacementPolicy
     private readonly int _maxTestPages;
     private readonly object _sync = new();
 
+    /// <summary>
+    /// Initializes a new <see cref="ClockProPolicy"/> for a pool of <paramref name="totalFrames"/> frames.
+    /// </summary>
+    /// <param name="totalFrames">Total frame count in the buffer pool.</param>
     public ClockProPolicy(int totalFrames)
     {
         _totalFrames = Math.Max(1, totalFrames);
@@ -40,11 +56,19 @@ public sealed class ClockProPolicy : IPageReplacementPolicy
         _handHot = 0;
     }
 
-    public int ColdCount => _coldCount;
-    public int HotCount => _hotCount;
-    public int TargetCold => _targetCold;
+    /// <summary>Gets the current number of resident cold frames.</summary>
+    public int ColdCount { get { lock (_sync) return _coldCount; } }
+
+    /// <summary>Gets the current number of resident hot frames.</summary>
+    public int HotCount { get { lock (_sync) return _hotCount; } }
+
+    /// <summary>Gets the adaptive target cold frame capacity.</summary>
+    public int TargetCold { get { lock (_sync) return _targetCold; } }
+
+    /// <summary>Gets the number of non-resident test history entries.</summary>
     public int TestPageCount { get { lock (_sync) return _testPages.Count; } }
 
+    /// <inheritdoc />
     public void RecordAccess(BufferFrame frame)
     {
         lock (_sync)
@@ -76,6 +100,7 @@ public sealed class ClockProPolicy : IPageReplacementPolicy
         }
     }
 
+    /// <inheritdoc />
     public int SelectVictim(BufferFrame[] frames)
     {
         lock (_sync)
@@ -89,9 +114,28 @@ public sealed class ClockProPolicy : IPageReplacementPolicy
                 _handCold = (_handCold + 1) % _totalFrames;
                 iterations++;
 
+                FrameState state = frame.State;
+                if (state == FrameState.Loading || state == FrameState.Evicting)
+                {
+                    continue;
+                }
+
+                if (state == FrameState.Empty)
+                {
+                    if (frame.PinCount == 0 && frame.Status == PageStatus.Empty)
+                    {
+                        return frame.FrameIndex;
+                    }
+                    continue;
+                }
+
                 if (frame.Status == PageStatus.Empty)
                 {
-                    return frame.FrameIndex;
+                    if (frame.PinCount == 0)
+                    {
+                        return frame.FrameIndex;
+                    }
+                    continue;
                 }
 
                 if (frame.Status == PageStatus.Cold)
@@ -110,7 +154,7 @@ public sealed class ClockProPolicy : IPageReplacementPolicy
                     else
                     {
                         // Cold page with RefBit == 0 is candidate for eviction
-                        if (frame.PinCount == 0)
+                        if (frame.IsEvictable)
                         {
                             return frame.FrameIndex;
                         }
@@ -132,10 +176,10 @@ public sealed class ClockProPolicy : IPageReplacementPolicy
                 }
             }
 
-            // Fallback: find any unpinned frame
+            // Fallback: find any unpinned evictable frame
             for (int i = 0; i < frames.Length; i++)
             {
-                if (frames[i].PinCount == 0)
+                if (frames[i].IsEvictable)
                 {
                     return i;
                 }
@@ -147,12 +191,15 @@ public sealed class ClockProPolicy : IPageReplacementPolicy
 
     private void AdvanceHotHand(BufferFrame[] frames)
     {
-        while (_hotCount > _totalFrames - _targetCold)
+        int guard = 0;
+        int limit = _totalFrames * 2;
+        while (_hotCount > _totalFrames - _targetCold && guard < limit)
         {
+            guard++;
             BufferFrame frame = frames[_handHot];
             _handHot = (_handHot + 1) % _totalFrames;
 
-            if (frame.Status == PageStatus.Hot)
+            if (frame.State == FrameState.Resident && frame.Status == PageStatus.Hot)
             {
                 if (frame.RefBit == 1)
                 {
@@ -168,6 +215,7 @@ public sealed class ClockProPolicy : IPageReplacementPolicy
         }
     }
 
+    /// <inheritdoc />
     public void OnEvict(BufferFrame frame)
     {
         lock (_sync)
@@ -214,6 +262,10 @@ public sealed class TwoQueuePolicy : IPageReplacementPolicy
     private readonly Dictionary<int, LinkedListNode<int>> _amNodes = new();
     private readonly object _sync = new();
 
+    /// <summary>
+    /// Initializes a new <see cref="TwoQueuePolicy"/> for a pool of <paramref name="totalFrames"/> frames.
+    /// </summary>
+    /// <param name="totalFrames">Total frame count in the buffer pool.</param>
     public TwoQueuePolicy(int totalFrames)
     {
         _totalFrames = Math.Max(1, totalFrames);
@@ -221,6 +273,7 @@ public sealed class TwoQueuePolicy : IPageReplacementPolicy
         _koutLimit = Math.Max(1, _totalFrames / 2);
     }
 
+    /// <inheritdoc />
     public void RecordAccess(BufferFrame frame)
     {
         lock (_sync)
@@ -254,18 +307,19 @@ public sealed class TwoQueuePolicy : IPageReplacementPolicy
         }
     }
 
+    /// <inheritdoc />
     public int SelectVictim(BufferFrame[] frames)
     {
         lock (_sync)
         {
-            // If A1in size > kinLimit, evict from A1in head
+            // If A1in size >= kinLimit, evict from A1in head
             if (_a1In.Count >= _kinLimit)
             {
                 int count = _a1In.Count;
                 for (int i = 0; i < count; i++)
                 {
                     int candidate = _a1In.Dequeue();
-                    if (frames[candidate].PinCount == 0)
+                    if (frames[candidate].IsEvictable)
                     {
                         return candidate;
                     }
@@ -278,27 +332,29 @@ public sealed class TwoQueuePolicy : IPageReplacementPolicy
             while (curr != null)
             {
                 int candidate = curr.Value;
-                if (frames[candidate].PinCount == 0)
+                if (frames[candidate].IsEvictable)
                 {
                     return candidate;
                 }
                 curr = curr.Previous;
             }
 
-            // Fallback to any in A1in
-            while (_a1In.Count > 0)
+            // Fallback to any evictable frame in A1in (re-enqueue pinned frames)
+            int remaining = _a1In.Count;
+            for (int i = 0; i < remaining; i++)
             {
                 int candidate = _a1In.Dequeue();
-                if (frames[candidate].PinCount == 0)
+                if (frames[candidate].IsEvictable)
                 {
                     return candidate;
                 }
+                _a1In.Enqueue(candidate);
             }
 
             // Fallback: check all frames
             for (int i = 0; i < frames.Length; i++)
             {
-                if (frames[i].PinCount == 0)
+                if (frames[i].IsEvictable)
                 {
                     return i;
                 }
@@ -308,6 +364,7 @@ public sealed class TwoQueuePolicy : IPageReplacementPolicy
         }
     }
 
+    /// <inheritdoc />
     public void OnEvict(BufferFrame frame)
     {
         lock (_sync)

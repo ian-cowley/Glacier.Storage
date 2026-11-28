@@ -1,3 +1,4 @@
+#if !USE_LOCAL_FORMATS
 namespace Glacier.Storage.Encoding;
 
 using System;
@@ -5,7 +6,7 @@ using System.Runtime.Intrinsics;
 
 public sealed partial class FastLanesBitUnpacker
 {
-    public readonly struct BitWidthTable32
+    internal readonly struct BitWidthTable32
     {
         public readonly Vector512<uint> DwordIndices;
         public readonly Vector512<uint> ShiftAmounts;
@@ -60,7 +61,7 @@ public sealed partial class FastLanesBitUnpacker
         }
     }
 
-    public readonly struct BitWidthTable64
+    internal readonly struct BitWidthTable64
     {
         public readonly Vector512<ulong> QwordIndices;
         public readonly Vector512<ulong> ShiftAmounts;
@@ -131,3 +132,4 @@ public sealed partial class FastLanesBitUnpacker
         }
     }
 }
+#endif

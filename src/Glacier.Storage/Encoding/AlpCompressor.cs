@@ -13,10 +13,19 @@ namespace Glacier.Storage.Encoding;
 /// </summary>
 public enum AlpCompressionMode : byte
 {
+    /// <summary>Uncompressed raw values.</summary>
     Raw = 0,
+
+    /// <summary>ALP decimal-scaled encoding for 32-bit floats.</summary>
     AlpFloat = 1,
+
+    /// <summary>ALP decimal-scaled encoding for 64-bit doubles.</summary>
     AlpDouble = 2,
+
+    /// <summary>ALP real-doubles split left/right decimal encoding for 64-bit doubles.</summary>
     AlpRdDouble = 3,
+
+    /// <summary>Constant run-length block storing a single repeated value in the header.</summary>
     Constant = 4
 }
 
@@ -25,9 +34,28 @@ public enum AlpCompressionMode : byte
 /// </summary>
 public interface IAlpCompressionCodec
 {
+    /// <summary>Compresses a span of single-precision floats using ALP.</summary>
+    /// <param name="values">Input values to compress.</param>
+    /// <param name="exceptionCount">Receives the number of unencodable exception values.</param>
+    /// <returns>The compressed ALP block bytes.</returns>
     byte[] Compress(ReadOnlySpan<float> values, out int exceptionCount);
+
+    /// <summary>Decompresses an ALP-encoded single-precision float block.</summary>
+    /// <param name="compressed">Compressed ALP block bytes.</param>
+    /// <param name="originalCount">Expected element count.</param>
+    /// <returns>The decompressed float array.</returns>
     float[] Decompress(ReadOnlySpan<byte> compressed, int originalCount);
+
+    /// <summary>Compresses a span of double-precision floats using ALP or ALP_RD.</summary>
+    /// <param name="values">Input values to compress.</param>
+    /// <param name="exceptionCount">Receives the number of unencodable exception values.</param>
+    /// <returns>The compressed ALP block bytes.</returns>
     byte[] CompressDouble(ReadOnlySpan<double> values, out int exceptionCount);
+
+    /// <summary>Decompresses an ALP- or ALP_RD-encoded double-precision float block.</summary>
+    /// <param name="compressed">Compressed ALP block bytes.</param>
+    /// <param name="originalCount">Expected element count.</param>
+    /// <returns>The decompressed double array.</returns>
     double[] DecompressDouble(ReadOnlySpan<byte> compressed, int originalCount);
 }
 
@@ -37,7 +65,10 @@ public interface IAlpCompressionCodec
 /// </summary>
 public static class AlpCompressor
 {
+    /// <summary>4-byte ALP block magic marker (<c>'ALP1'</c>).</summary>
     public const uint Magic = 0x414C5031; // 'ALP1' in ASCII
+
+    /// <summary>Fixed 48-byte ALP block header size.</summary>
     public const int HeaderSize = 48;
 
     private static readonly double[] s_pow10Double =
@@ -52,17 +83,38 @@ public static class AlpCompressor
         1e-11, 1e-12, 1e-13, 1e-14, 1e-15, 1e-16, 1e-17, 1e-18
     ];
 
+    /// <summary>
+    /// Computes the worst-case compressed byte length for <paramref name="count"/> elements of size <paramref name="elementSize"/>.
+    /// </summary>
+    /// <param name="count">Number of elements in the block.</param>
+    /// <param name="elementSize">Element byte width (4 for float, 8 for double).</param>
+    /// <returns>Maximum compressed byte length.</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static int GetMaxCompressedLength(int count, int elementSize)
     {
-        return HeaderSize + (count * Math.Max(elementSize, 8) * 2) + (count * (2 + elementSize)) + 128;
+        ArgumentOutOfRangeException.ThrowIfNegative(count);
+        ArgumentOutOfRangeException.ThrowIfLessThanOrEqual(elementSize, 0);
+        return checked(HeaderSize + (count * Math.Max(elementSize, 8) * 2) + (count * (2 + elementSize)) + 128);
     }
 
+    /// <summary>
+    /// Compresses a block of single-precision floats into <paramref name="destination"/>.
+    /// </summary>
+    /// <param name="source">Input values (up to 65,535 elements).</param>
+    /// <param name="destination">Output buffer sized at least <see cref="GetMaxCompressedLength"/>.</param>
+    /// <returns>Total compressed bytes written.</returns>
     public static int CompressFloat(ReadOnlySpan<float> source, Span<byte> destination)
     {
         return CompressFloat(source, destination, out _);
     }
 
+    /// <summary>
+    /// Compresses a block of single-precision floats into <paramref name="destination"/> and outputs the exception count.
+    /// </summary>
+    /// <param name="source">Input values (up to 65,535 elements).</param>
+    /// <param name="destination">Output buffer sized at least <see cref="GetMaxCompressedLength"/>.</param>
+    /// <param name="exceptionCount">Receives the number of exception elements stored verbatim.</param>
+    /// <returns>Total compressed bytes written.</returns>
     public static int CompressFloat(ReadOnlySpan<float> source, Span<byte> destination, out int exceptionCount)
     {
         int count = source.Length;
@@ -263,20 +315,24 @@ public static class AlpCompressor
         }
     }
 
+    /// <summary>
+    /// Decompresses an ALP-encoded single-precision float block into <paramref name="destination"/>.
+    /// </summary>
+    /// <param name="source">Compressed ALP block bytes.</param>
+    /// <param name="destination">Output span receiving decoded floats.</param>
+    /// <returns>Number of decoded elements.</returns>
     public static int DecompressFloat(ReadOnlySpan<byte> source, Span<float> destination)
     {
         if (source.IsEmpty) return 0;
-        if (source.Length < HeaderSize)
-            throw new InvalidDataException("Source buffer is too small for an ALP header.");
 
         ReadHeader(source, out var mode, out byte exp, out byte bitWidth, out _, out _,
             out ushort count, out ushort exCount, out long minBase, out _, out ulong minBits, out _);
 
-        if (destination.Length < count)
-            throw new ArgumentException($"Destination span too small. Required: {count}, Actual: {destination.Length}", nameof(destination));
-
         if (mode == AlpCompressionMode.Constant)
         {
+            if (destination.Length < count)
+                throw new ArgumentException($"Destination span too small. Required: {count}, Actual: {destination.Length}", nameof(destination));
+
             float constVal = BitConverter.UInt32BitsToSingle((uint)minBits);
             destination.Slice(0, count).Fill(constVal);
             return count;
@@ -285,10 +341,38 @@ public static class AlpCompressor
         if (mode != AlpCompressionMode.AlpFloat)
             throw new InvalidDataException($"Expected AlpFloat compression mode, but got {mode}.");
 
-        int packedBytes = (count * bitWidth + 7) / 8;
-        int expectedTotal = HeaderSize + packedBytes + (exCount * 2) + (exCount * 4);
+        if (exp >= s_pow10Double.Length)
+            throw new InvalidDataException($"Invalid ALP exponent: {exp}.");
+        if (bitWidth > 64)
+            throw new InvalidDataException($"Invalid ALP bit-width: {bitWidth}.");
+        if (exCount > count)
+            throw new InvalidDataException($"Invalid ALP exception count {exCount} for block count {count}.");
+
+        int packedBytes;
+        int expectedTotal;
+        try
+        {
+            packedBytes = checked((count * bitWidth + 7) >> 3);
+            expectedTotal = checked(HeaderSize + packedBytes + (exCount * 2) + (exCount * 4));
+        }
+        catch (OverflowException ex)
+        {
+            throw new InvalidDataException("ALP stream length overflows Int32.", ex);
+        }
+
         if (source.Length < expectedTotal)
             throw new InvalidDataException($"ALP stream truncated. Expected {expectedTotal} bytes, got {source.Length}.");
+
+        int exOffset = HeaderSize + packedBytes;
+        for (int k = 0; k < exCount; k++)
+        {
+            ushort idx = BinaryPrimitives.ReadUInt16LittleEndian(source.Slice(exOffset + (k * 2), 2));
+            if (idx >= count)
+                throw new InvalidDataException($"Invalid ALP exception index {idx} for block count {count}.");
+        }
+
+        if (destination.Length < count)
+            throw new ArgumentException($"Destination span too small. Required: {count}, Actual: {destination.Length}", nameof(destination));
 
         ulong[] unpacked = ArrayPool<ulong>.Shared.Rent(count);
         try
@@ -303,7 +387,6 @@ public static class AlpCompressor
                 destination[i] = (float)((double)v / factor);
             }
 
-            int exOffset = HeaderSize + packedBytes;
             int exValOffset = exOffset + (exCount * 2);
 
             for (int k = 0; k < exCount; k++)
@@ -321,11 +404,24 @@ public static class AlpCompressor
         }
     }
 
+    /// <summary>
+    /// Compresses a block of double-precision floats into <paramref name="destination"/>.
+    /// </summary>
+    /// <param name="source">Input values (up to 65,535 elements).</param>
+    /// <param name="destination">Output buffer sized at least <see cref="GetMaxCompressedLength"/>.</param>
+    /// <returns>Total compressed bytes written.</returns>
     public static int CompressDouble(ReadOnlySpan<double> source, Span<byte> destination)
     {
         return CompressDouble(source, destination, out _);
     }
 
+    /// <summary>
+    /// Compresses a block of double-precision floats into <paramref name="destination"/> and outputs the exception count.
+    /// </summary>
+    /// <param name="source">Input values (up to 65,535 elements).</param>
+    /// <param name="destination">Output buffer sized at least <see cref="GetMaxCompressedLength"/>.</param>
+    /// <param name="exceptionCount">Receives the number of exception elements stored verbatim.</param>
+    /// <returns>Total compressed bytes written.</returns>
     public static int CompressDouble(ReadOnlySpan<double> source, Span<byte> destination, out int exceptionCount)
     {
         int count = source.Length;
@@ -712,20 +808,24 @@ public static class AlpCompressor
         }
     }
 
+    /// <summary>
+    /// Decompresses an ALP- or ALP_RD-encoded double-precision float block into <paramref name="destination"/>.
+    /// </summary>
+    /// <param name="source">Compressed ALP block bytes.</param>
+    /// <param name="destination">Output span receiving decoded doubles.</param>
+    /// <returns>Number of decoded elements.</returns>
     public static int DecompressDouble(ReadOnlySpan<byte> source, Span<double> destination)
     {
         if (source.IsEmpty) return 0;
-        if (source.Length < HeaderSize)
-            throw new InvalidDataException("Source buffer is too small for an ALP header.");
 
         ReadHeader(source, out var mode, out byte exp, out byte bitWidth, out byte expR, out byte bitWidthR,
             out ushort count, out ushort exCount, out long minBase, out long minBaseR, out ulong minBits, out _);
 
-        if (destination.Length < count)
-            throw new ArgumentException($"Destination span too small. Required: {count}, Actual: {destination.Length}", nameof(destination));
-
         if (mode == AlpCompressionMode.Constant)
         {
+            if (destination.Length < count)
+                throw new ArgumentException($"Destination span too small. Required: {count}, Actual: {destination.Length}", nameof(destination));
+
             double constVal = BitConverter.UInt64BitsToDouble(minBits);
             destination.Slice(0, count).Fill(constVal);
             return count;
@@ -733,10 +833,38 @@ public static class AlpCompressor
 
         if (mode == AlpCompressionMode.AlpDouble)
         {
-            int packedBytes = (count * bitWidth + 7) / 8;
-            int expectedTotal = HeaderSize + packedBytes + (exCount * 2) + (exCount * 8);
+            if (exp >= s_pow10Double.Length)
+                throw new InvalidDataException($"Invalid ALP exponent: {exp}.");
+            if (bitWidth > 64)
+                throw new InvalidDataException($"Invalid ALP bit-width: {bitWidth}.");
+            if (exCount > count)
+                throw new InvalidDataException($"Invalid ALP exception count {exCount} for block count {count}.");
+
+            int packedBytes;
+            int expectedTotal;
+            try
+            {
+                packedBytes = checked((count * bitWidth + 7) >> 3);
+                expectedTotal = checked(HeaderSize + packedBytes + (exCount * 2) + (exCount * 8));
+            }
+            catch (OverflowException ex)
+            {
+                throw new InvalidDataException("ALP stream length overflows Int32.", ex);
+            }
+
             if (source.Length < expectedTotal)
                 throw new InvalidDataException($"ALP stream truncated. Expected {expectedTotal} bytes, got {source.Length}.");
+
+            int exOffset = HeaderSize + packedBytes;
+            for (int k = 0; k < exCount; k++)
+            {
+                ushort idx = BinaryPrimitives.ReadUInt16LittleEndian(source.Slice(exOffset + (k * 2), 2));
+                if (idx >= count)
+                    throw new InvalidDataException($"Invalid ALP exception index {idx} for block count {count}.");
+            }
+
+            if (destination.Length < count)
+                throw new ArgumentException($"Destination span too small. Required: {count}, Actual: {destination.Length}", nameof(destination));
 
             ulong[] unpacked = ArrayPool<ulong>.Shared.Rent(count);
             try
@@ -751,7 +879,6 @@ public static class AlpCompressor
                     destination[i] = (double)v / factor;
                 }
 
-                int exOffset = HeaderSize + packedBytes;
                 int exValOffset = exOffset + (exCount * 2);
 
                 for (int k = 0; k < exCount; k++)
@@ -770,11 +897,42 @@ public static class AlpCompressor
         }
         else if (mode == AlpCompressionMode.AlpRdDouble)
         {
-            int packedBytesL = (count * bitWidth + 7) / 8;
-            int packedBytesR = (count * bitWidthR + 7) / 8;
-            int expectedTotal = HeaderSize + packedBytesL + packedBytesR + (exCount * 2) + (exCount * 8);
+            if (expR >= s_pow10Double.Length)
+                throw new InvalidDataException($"Invalid ALP_RD right exponent: {expR}.");
+            if (bitWidth > 64)
+                throw new InvalidDataException($"Invalid ALP_RD left bit-width: {bitWidth}.");
+            if (bitWidthR > 64)
+                throw new InvalidDataException($"Invalid ALP_RD right bit-width: {bitWidthR}.");
+            if (exCount > count)
+                throw new InvalidDataException($"Invalid ALP_RD exception count {exCount} for block count {count}.");
+
+            int packedBytesL;
+            int packedBytesR;
+            int expectedTotal;
+            try
+            {
+                packedBytesL = checked((count * bitWidth + 7) >> 3);
+                packedBytesR = checked((count * bitWidthR + 7) >> 3);
+                expectedTotal = checked(HeaderSize + packedBytesL + packedBytesR + (exCount * 2) + (exCount * 8));
+            }
+            catch (OverflowException ex)
+            {
+                throw new InvalidDataException("ALP_RD stream length overflows Int32.", ex);
+            }
+
             if (source.Length < expectedTotal)
                 throw new InvalidDataException($"ALP_RD stream truncated. Expected {expectedTotal} bytes, got {source.Length}.");
+
+            int exOffset = HeaderSize + packedBytesL + packedBytesR;
+            for (int k = 0; k < exCount; k++)
+            {
+                ushort idx = BinaryPrimitives.ReadUInt16LittleEndian(source.Slice(exOffset + (k * 2), 2));
+                if (idx >= count)
+                    throw new InvalidDataException($"Invalid ALP_RD exception index {idx} for block count {count}.");
+            }
+
+            if (destination.Length < count)
+                throw new ArgumentException($"Destination span too small. Required: {count}, Actual: {destination.Length}", nameof(destination));
 
             ulong[] unpackedL = ArrayPool<ulong>.Shared.Rent(count);
             ulong[] unpackedR = ArrayPool<ulong>.Shared.Rent(count);
@@ -794,7 +952,6 @@ public static class AlpCompressor
                     destination[i] = (double)left + ((double)right / factorR);
                 }
 
-                int exOffset = HeaderSize + packedBytesL + packedBytesR;
                 int exValOffset = exOffset + (exCount * 2);
 
                 for (int k = 0; k < exCount; k++)
@@ -849,6 +1006,21 @@ public static class AlpCompressor
         BinaryPrimitives.WriteUInt64LittleEndian(destination.Slice(0x28, 8), zoneMapMaxBits);
     }
 
+    /// <summary>
+    /// Parses and validates the 48-byte ALP block header from <paramref name="source"/>.
+    /// </summary>
+    /// <param name="source">Source buffer starting at the ALP header.</param>
+    /// <param name="mode">Receives the compression mode.</param>
+    /// <param name="exponent">Receives the decimal exponent.</param>
+    /// <param name="bitWidth">Receives the primary bit-width.</param>
+    /// <param name="exponentRight">Receives the ALP_RD right-side decimal exponent.</param>
+    /// <param name="bitWidthRight">Receives the ALP_RD right-side bit-width.</param>
+    /// <param name="count">Receives the element count in the block.</param>
+    /// <param name="exceptionCount">Receives the exception element count.</param>
+    /// <param name="minBase">Receives the frame-of-reference base value.</param>
+    /// <param name="minBaseRight">Receives the ALP_RD right-side frame-of-reference base value.</param>
+    /// <param name="zoneMapMinBits">Receives the raw IEEE 754 minimum value bits for zone-map pruning.</param>
+    /// <param name="zoneMapMaxBits">Receives the raw IEEE 754 maximum value bits for zone-map pruning.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void ReadHeader(
         ReadOnlySpan<byte> source,
@@ -864,6 +1036,11 @@ public static class AlpCompressor
         out ulong zoneMapMinBits,
         out ulong zoneMapMaxBits)
     {
+        if (source.Length < HeaderSize)
+        {
+            throw new InvalidDataException($"Source buffer is too small for an ALP header. Expected at least {HeaderSize} bytes, got {source.Length}.");
+        }
+
         uint magic = BinaryPrimitives.ReadUInt32LittleEndian(source.Slice(0x00, 4));
         if (magic != Magic)
         {
@@ -952,8 +1129,12 @@ public static class AlpCompressor
     }
 }
 
+/// <summary>
+/// Default <see cref="IAlpCompressionCodec"/> implementation backed by <see cref="AlpCompressor"/>.
+/// </summary>
 public sealed class AlpCompressionCodec : IAlpCompressionCodec
 {
+    /// <inheritdoc />
     public byte[] Compress(ReadOnlySpan<float> values, out int exceptionCount)
     {
         int maxLen = AlpCompressor.GetMaxCompressedLength(values.Length, sizeof(float));
@@ -965,13 +1146,16 @@ public sealed class AlpCompressionCodec : IAlpCompressionCodec
         return result;
     }
 
+    /// <inheritdoc />
     public float[] Decompress(ReadOnlySpan<byte> compressed, int originalCount)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(originalCount);
         float[] result = new float[originalCount];
         AlpCompressor.DecompressFloat(compressed, result);
         return result;
     }
 
+    /// <inheritdoc />
     public byte[] CompressDouble(ReadOnlySpan<double> values, out int exceptionCount)
     {
         int maxLen = AlpCompressor.GetMaxCompressedLength(values.Length, sizeof(double));
@@ -983,8 +1167,10 @@ public sealed class AlpCompressionCodec : IAlpCompressionCodec
         return result;
     }
 
+    /// <inheritdoc />
     public double[] DecompressDouble(ReadOnlySpan<byte> compressed, int originalCount)
     {
+        ArgumentOutOfRangeException.ThrowIfNegative(originalCount);
         double[] result = new double[originalCount];
         AlpCompressor.DecompressDouble(compressed, result);
         return result;

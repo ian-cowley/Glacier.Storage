@@ -395,4 +395,39 @@ public class FastLanesBitUnpackerTests
 
         Assert.Throws<ArgumentOutOfRangeException>(() => unpacker.Unpack16Lanes(packed, dest, bitWidth: 4, laneOffset: -1));
     }
+
+#if USE_LOCAL_FORMATS
+    [Fact]
+    public void FastLanesBitUnpacker_LocalFormatsDelegation_Parity()
+    {
+        Assert.IsAssignableFrom<Glacier.Formats.Encoding.IFastLanesBitUnpacker>(FastLanesBitUnpacker.Default);
+
+        Span<uint> storageOut = stackalloc uint[16];
+        Span<uint> formatsOut = stackalloc uint[16];
+
+        for (int w = 1; w <= 32; w++)
+        {
+            int req = (16 * w + 7) >> 3;
+            byte[] packed = new byte[req];
+            new Random(700 + w).NextBytes(packed);
+
+            FastLanesBitUnpacker.Unpack16(packed, storageOut, w);
+            Glacier.Formats.Encoding.FastLanesBitUnpacker.Unpack16(packed, formatsOut, w);
+            Assert.True(storageOut.SequenceEqual(formatsOut));
+        }
+
+        Span<ulong> storage64 = stackalloc ulong[8];
+        Span<ulong> formats64 = stackalloc ulong[8];
+        for (int w = 1; w <= 64; w++)
+        {
+            int req = (8 * w + 7) >> 3;
+            byte[] packed = new byte[req];
+            new Random(800 + w).NextBytes(packed);
+
+            FastLanesBitUnpacker.Unpack8Lanes64(packed, storage64, w);
+            Glacier.Formats.Encoding.FastLanesBitUnpacker.Unpack8Lanes64(packed, formats64, w);
+            Assert.True(storage64.SequenceEqual(formats64));
+        }
+    }
+#endif
 }

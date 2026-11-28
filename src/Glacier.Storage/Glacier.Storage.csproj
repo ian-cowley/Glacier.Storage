@@ -9,6 +9,8 @@
     <ServerGarbageCollection>true</ServerGarbageCollection>
     <IsAotCompatible>true</IsAotCompatible>
     <EnableTrimAnalyzer>true</EnableTrimAnalyzer>
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
     <PackageId>Glacier.Storage</PackageId>
     <Version>1.1.1</Version>
     <PackageReleaseNotes>v1.1.1: Updated Glacier.Formats 1.0.1 dependency and WAL/BufferPool durability fixes.</PackageReleaseNotes>
@@ -26,11 +28,15 @@
   <ItemGroup>
     <None Include="..\..\README.md" Pack="true" PackagePath="\" />
   </ItemGroup>
+  <PropertyGroup Condition="Exists('../../../Glacier.Formats/src/Glacier.Formats/Glacier.Formats.csproj') and '$(UseLocalProjectReferences)' != 'false'">
+    <DefineConstants>$(DefineConstants);USE_LOCAL_FORMATS</DefineConstants>
+  </PropertyGroup>
+
   <ItemGroup Condition="Exists('../../../Glacier.Formats/src/Glacier.Formats/Glacier.Formats.csproj') and '$(UseLocalProjectReferences)' != 'false'">
     <ProjectReference Include="../../../Glacier.Formats/src/Glacier.Formats/Glacier.Formats.csproj" />
   </ItemGroup>
   <ItemGroup Condition="!Exists('../../../Glacier.Formats/src/Glacier.Formats/Glacier.Formats.csproj') or '$(UseLocalProjectReferences)' == 'false'">
-    <PackageReference Include="Glacier.Formats" Version="1.0.1" />
+    <PackageReference Include="Glacier.Formats" />
   </ItemGroup>
 
   <ItemGroup>

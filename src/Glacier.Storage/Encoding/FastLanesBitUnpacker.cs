@@ -1,7 +1,6 @@
 namespace Glacier.Storage.Encoding;
 
 using System;
-using System.Buffers.Binary;
 using System.Runtime.CompilerServices;
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics;
@@ -12,16 +11,109 @@ using System.Runtime.Intrinsics.X86;
 /// Unpacks 16 32-bit integer lanes or 8 64-bit integer lanes at peak hardware throughput.
 /// </summary>
 public sealed partial class FastLanesBitUnpacker : IFastLanesBitUnpacker
+#if USE_LOCAL_FORMATS
+    , Glacier.Formats.Encoding.IFastLanesBitUnpacker
+#endif
 {
     private static readonly FastLanesBitUnpacker s_default = new();
+
+    /// <summary>
+    /// Gets the default singleton <see cref="FastLanesBitUnpacker"/> instance.
+    /// </summary>
     public static FastLanesBitUnpacker Default => s_default;
 
+#if USE_LOCAL_FORMATS
+    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Unpack16Lanes(ReadOnlySpan<byte> packed, Span<uint> destination, int bitWidth) =>
+        Glacier.Formats.Encoding.FastLanesBitUnpacker.Default.Unpack16Lanes(packed, destination, bitWidth);
+
+    /// <inheritdoc />
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public void Unpack16Lanes(ReadOnlySpan<byte> packed, Span<uint> destination, int bitWidth, int laneOffset) =>
+        Glacier.Formats.Encoding.FastLanesBitUnpacker.Default.Unpack16Lanes(packed, destination, bitWidth, laneOffset);
+
+    /// <summary>
+    /// Unpacks 16 32-bit lanes of the specified bit-width using the optimal hardware SIMD path.
+    /// </summary>
+    /// <param name="packed">The bit-packed input bytes.</param>
+    /// <param name="destination">The destination span receiving at least 16 unpacked 32-bit integers.</param>
+    /// <param name="bitWidth">The bit-width of each packed value (1 to 32).</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void Unpack16(ReadOnlySpan<byte> packed, Span<uint> destination, int bitWidth) =>
+        Glacier.Formats.Encoding.FastLanesBitUnpacker.Unpack16(packed, destination, bitWidth);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static void Unpack16_Vector512(ReadOnlySpan<byte> packed, Span<uint> destination, int bitWidth, int requiredBytes) =>
+        Glacier.Formats.Encoding.FastLanesBitUnpacker.Unpack16_Vector512(packed, destination, bitWidth, requiredBytes);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static void Unpack16_Vector256(ReadOnlySpan<byte> packed, Span<uint> destination, int bitWidth, int requiredBytes) =>
+        Glacier.Formats.Encoding.FastLanesBitUnpacker.Unpack16_Vector256(packed, destination, bitWidth, requiredBytes);
+
+    /// <summary>
+    /// Unpacks 16 32-bit lanes using scalar bit extraction.
+    /// </summary>
+    /// <param name="packed">The bit-packed input bytes.</param>
+    /// <param name="destination">The destination span receiving at least 16 unpacked 32-bit integers.</param>
+    /// <param name="bitWidth">The bit-width of each packed value (1 to 32).</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe void Unpack16_Scalar(ReadOnlySpan<byte> packed, Span<uint> destination, int bitWidth) =>
+        Glacier.Formats.Encoding.FastLanesBitUnpacker.Unpack16_Scalar(packed, destination, bitWidth);
+
+    /// <summary>
+    /// Unpacks 16 32-bit lanes using scalar bit extraction starting at <paramref name="initialBitOffset"/>.
+    /// </summary>
+    /// <param name="packed">The bit-packed input bytes.</param>
+    /// <param name="destination">The destination span receiving at least 16 unpacked 32-bit integers.</param>
+    /// <param name="bitWidth">The bit-width of each packed value (1 to 32).</param>
+    /// <param name="initialBitOffset">The starting bit offset inside <paramref name="packed"/>.</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe void Unpack16_Scalar(ReadOnlySpan<byte> packed, Span<uint> destination, int bitWidth, int initialBitOffset) =>
+        Glacier.Formats.Encoding.FastLanesBitUnpacker.Unpack16_Scalar(packed, destination, bitWidth, initialBitOffset);
+
+    /// <summary>
+    /// Unpacks 8 64-bit lanes of the specified bit-width using the optimal hardware SIMD path.
+    /// </summary>
+    /// <param name="packed">The bit-packed input bytes.</param>
+    /// <param name="destination">The destination span receiving at least 8 unpacked 64-bit integers.</param>
+    /// <param name="bitWidth">The bit-width of each packed value (1 to 64).</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void Unpack8Lanes64(ReadOnlySpan<byte> packed, Span<ulong> destination, int bitWidth) =>
+        Glacier.Formats.Encoding.FastLanesBitUnpacker.Unpack8Lanes64(packed, destination, bitWidth);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    internal static void Unpack8_64_Vector512(ReadOnlySpan<byte> packed, Span<ulong> destination, int bitWidth, int requiredBytes) =>
+        Glacier.Formats.Encoding.FastLanesBitUnpacker.Unpack8_64_Vector512(packed, destination, bitWidth, requiredBytes);
+
+    /// <summary>
+    /// Unpacks 8 64-bit lanes using scalar bit extraction.
+    /// </summary>
+    /// <param name="packed">The bit-packed input bytes.</param>
+    /// <param name="destination">The destination span receiving at least 8 unpacked 64-bit integers.</param>
+    /// <param name="bitWidth">The bit-width of each packed value (1 to 64).</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static unsafe void Unpack8_64_Scalar(ReadOnlySpan<byte> packed, Span<ulong> destination, int bitWidth) =>
+        Glacier.Formats.Encoding.FastLanesBitUnpacker.Unpack8_64_Scalar(packed, destination, bitWidth);
+
+    /// <summary>
+    /// Unpacks a contiguous block of 1,024 32-bit values (64 groups of 16 lanes).
+    /// </summary>
+    /// <param name="packed">The bit-packed input bytes.</param>
+    /// <param name="destination">The destination span receiving at least 1,024 unpacked 32-bit integers.</param>
+    /// <param name="bitWidth">The bit-width of each packed value (1 to 32).</param>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static void Unpack1024(ReadOnlySpan<byte> packed, Span<uint> destination, int bitWidth) =>
+        Glacier.Formats.Encoding.FastLanesBitUnpacker.Unpack1024(packed, destination, bitWidth);
+#else
+    /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Unpack16Lanes(ReadOnlySpan<byte> packed, Span<uint> destination, int bitWidth)
     {
         Unpack16(packed, destination, bitWidth);
     }
 
+    /// <inheritdoc />
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void Unpack16Lanes(ReadOnlySpan<byte> packed, Span<uint> destination, int bitWidth, int laneOffset)
     {
@@ -35,12 +127,12 @@ public sealed partial class FastLanesBitUnpacker : IFastLanesBitUnpacker
             throw new ArgumentException("Destination span must have at least 16 elements.", nameof(destination));
 
         long totalStartBit = (long)laneOffset * bitWidth;
-        int byteOffset = (int)(totalStartBit >> 3);
-        int bitRemainder = (int)(totalStartBit & 7);
+        long requiredBytesLong = ((totalStartBit + 16L * bitWidth) + 7) >> 3;
+        if (packed.Length < requiredBytesLong)
+            throw new ArgumentException($"Packed buffer is too short. Required: {requiredBytesLong}, Actual: {packed.Length}", nameof(packed));
 
-        int requiredBytes = (int)(((totalStartBit + 16 * bitWidth) + 7) >> 3);
-        if (packed.Length < requiredBytes)
-            throw new ArgumentException($"Packed buffer is too short. Required: {requiredBytes}, Actual: {packed.Length}", nameof(packed));
+        int byteOffset = checked((int)(totalStartBit >> 3));
+        int bitRemainder = (int)(totalStartBit & 7);
 
         if (bitRemainder == 0)
         {
@@ -52,6 +144,12 @@ public sealed partial class FastLanesBitUnpacker : IFastLanesBitUnpacker
         }
     }
 
+    /// <summary>
+    /// Unpacks 16 32-bit lanes of the specified bit-width using the optimal hardware SIMD path.
+    /// </summary>
+    /// <param name="packed">The bit-packed input bytes.</param>
+    /// <param name="destination">The destination span receiving at least 16 unpacked 32-bit integers.</param>
+    /// <param name="bitWidth">The bit-width of each packed value (1 to 32).</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Unpack16(ReadOnlySpan<byte> packed, Span<uint> destination, int bitWidth)
     {
@@ -65,14 +163,12 @@ public sealed partial class FastLanesBitUnpacker : IFastLanesBitUnpacker
         if (packed.Length < requiredBytes)
             throw new ArgumentException($"Packed buffer is too short. Required: {requiredBytes}, Actual: {packed.Length}", nameof(packed));
 
-        // 32-bit direct cast
         if (bitWidth == 32)
         {
             MemoryMarshal.Cast<byte, uint>(packed[..64]).CopyTo(destination[..16]);
             return;
         }
 
-        // SIMD Dispatch Hierarchy
         if (Vector512.IsHardwareAccelerated && Avx512F.IsSupported)
         {
             Unpack16_Vector512(packed, destination, bitWidth, requiredBytes);
@@ -104,13 +200,9 @@ public sealed partial class FastLanesBitUnpacker : IFastLanesBitUnpacker
 
         ref readonly var table = ref s_bitWidthTables32[bitWidth];
 
-        // 1. Permute 32-bit dwords to lane positions
         Vector512<uint> dwords = Avx512F.PermuteVar16x32(vPacked, table.DwordIndices);
-
-        // 2. Variable right shift
         Vector512<uint> shifted = Avx512F.ShiftRightLogicalVariable(dwords, table.ShiftAmounts);
 
-        // 3. Resolve straddling dword boundaries if applicable
         if (table.HasStraddles)
         {
             Vector512<uint> dwordsNext = Avx512F.PermuteVar16x32(vPacked, table.DwordIndicesNext);
@@ -119,7 +211,6 @@ public sealed partial class FastLanesBitUnpacker : IFastLanesBitUnpacker
             shifted = Vector512.BitwiseOr(shifted, straddleBits);
         }
 
-        // 4. Uniform value mask
         Vector512<uint> result = Vector512.BitwiseAnd(shifted, table.ValueMask);
         result.CopyTo(destination);
     }
@@ -147,7 +238,6 @@ public sealed partial class FastLanesBitUnpacker : IFastLanesBitUnpacker
 
         ref readonly var table = ref s_bitWidthTables32[bitWidth];
 
-        // Process lower 8 lanes
         Vector256<uint> dwords0 = Avx2.PermuteVar8x32(vLow, table.DwordIndices.GetLower());
         Vector256<uint> shifted0 = Avx2.ShiftRightLogicalVariable(dwords0, table.ShiftAmounts.GetLower());
         if (table.HasStraddles)
@@ -158,7 +248,6 @@ public sealed partial class FastLanesBitUnpacker : IFastLanesBitUnpacker
         }
         Vector256.BitwiseAnd(shifted0, table.ValueMask.GetLower()).CopyTo(destination[..8]);
 
-        // Process upper 8 lanes (for bitWidth <= 16, all 16 lanes reside within 256 bits, loaded in vLow)
         Vector256<uint> dwords1 = Avx2.PermuteVar8x32(vLow, table.DwordIndices.GetUpper());
         Vector256<uint> shifted1 = Avx2.ShiftRightLogicalVariable(dwords1, table.ShiftAmounts.GetUpper());
         if (table.HasStraddles)
@@ -170,17 +259,38 @@ public sealed partial class FastLanesBitUnpacker : IFastLanesBitUnpacker
         Vector256.BitwiseAnd(shifted1, table.ValueMask.GetUpper()).CopyTo(destination.Slice(8, 8));
     }
 
+    /// <summary>
+    /// Unpacks 16 32-bit lanes using scalar bit extraction.
+    /// </summary>
+    /// <param name="packed">The bit-packed input bytes.</param>
+    /// <param name="destination">The destination span receiving at least 16 unpacked 32-bit integers.</param>
+    /// <param name="bitWidth">The bit-width of each packed value (1 to 32).</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
     public static unsafe void Unpack16_Scalar(ReadOnlySpan<byte> packed, Span<uint> destination, int bitWidth)
     {
         Unpack16_Scalar(packed, destination, bitWidth, 0);
     }
 
+    /// <summary>
+    /// Unpacks 16 32-bit lanes using scalar bit extraction starting at <paramref name="initialBitOffset"/>.
+    /// </summary>
+    /// <param name="packed">The bit-packed input bytes.</param>
+    /// <param name="destination">The destination span receiving at least 16 unpacked 32-bit integers.</param>
+    /// <param name="bitWidth">The bit-width of each packed value (1 to 32).</param>
+    /// <param name="initialBitOffset">The starting bit offset inside <paramref name="packed"/>.</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
     public static unsafe void Unpack16_Scalar(ReadOnlySpan<byte> packed, Span<uint> destination, int bitWidth, int initialBitOffset)
     {
+        if (bitWidth <= 0 || bitWidth > 32)
+            throw new ArgumentOutOfRangeException(nameof(bitWidth), "Bit-width must be between 1 and 32.");
+        if (initialBitOffset < 0)
+            throw new ArgumentOutOfRangeException(nameof(initialBitOffset), "Initial bit offset cannot be negative.");
         if (destination.Length < 16)
             throw new ArgumentException("Destination span must have at least 16 elements.", nameof(destination));
+
+        long requiredBytes = ((long)initialBitOffset + (16L * bitWidth) + 7) >> 3;
+        if (packed.Length < requiredBytes)
+            throw new ArgumentException($"Packed buffer is too short. Required: {requiredBytes}, Actual: {packed.Length}", nameof(packed));
 
         uint mask = bitWidth == 32 ? uint.MaxValue : ((1u << bitWidth) - 1u);
         int bitOffset = initialBitOffset;
@@ -205,10 +315,12 @@ public sealed partial class FastLanesBitUnpacker : IFastLanesBitUnpacker
         }
     }
 
-    // =========================================================================
-    // 64-BIT UNPACKING (8 LANES)
-    // =========================================================================
-
+    /// <summary>
+    /// Unpacks 8 64-bit lanes of the specified bit-width using the optimal hardware SIMD path.
+    /// </summary>
+    /// <param name="packed">The bit-packed input bytes.</param>
+    /// <param name="destination">The destination span receiving at least 8 unpacked 64-bit integers.</param>
+    /// <param name="bitWidth">The bit-width of each packed value (1 to 64).</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static void Unpack8Lanes64(ReadOnlySpan<byte> packed, Span<ulong> destination, int bitWidth)
     {
@@ -270,9 +382,24 @@ public sealed partial class FastLanesBitUnpacker : IFastLanesBitUnpacker
         result.CopyTo(destination);
     }
 
+    /// <summary>
+    /// Unpacks 8 64-bit lanes using scalar bit extraction.
+    /// </summary>
+    /// <param name="packed">The bit-packed input bytes.</param>
+    /// <param name="destination">The destination span receiving at least 8 unpacked 64-bit integers.</param>
+    /// <param name="bitWidth">The bit-width of each packed value (1 to 64).</param>
     [MethodImpl(MethodImplOptions.AggressiveInlining | MethodImplOptions.AggressiveOptimization)]
     public static unsafe void Unpack8_64_Scalar(ReadOnlySpan<byte> packed, Span<ulong> destination, int bitWidth)
     {
+        if (bitWidth <= 0 || bitWidth > 64)
+            throw new ArgumentOutOfRangeException(nameof(bitWidth), "Bit-width must be between 1 and 64.");
+        if (destination.Length < 8)
+            throw new ArgumentException("Destination span must have at least 8 elements.", nameof(destination));
+
+        int requiredBytes = (8 * bitWidth + 7) >> 3;
+        if (packed.Length < requiredBytes)
+            throw new ArgumentException($"Packed buffer too short. Required: {requiredBytes}, Actual: {packed.Length}", nameof(packed));
+
         ulong mask = bitWidth == 64 ? ulong.MaxValue : ((1UL << bitWidth) - 1UL);
         int bitOffset = 0;
 
@@ -303,10 +430,12 @@ public sealed partial class FastLanesBitUnpacker : IFastLanesBitUnpacker
         }
     }
 
-    // =========================================================================
-    // 1024-ELEMENT BLOCK UNPACKING
-    // =========================================================================
-
+    /// <summary>
+    /// Unpacks a contiguous block of 1,024 32-bit values (64 groups of 16 lanes).
+    /// </summary>
+    /// <param name="packed">The bit-packed input bytes.</param>
+    /// <param name="destination">The destination span receiving at least 1,024 unpacked 32-bit integers.</param>
+    /// <param name="bitWidth">The bit-width of each packed value (1 to 32).</param>
     [MethodImpl(MethodImplOptions.AggressiveOptimization)]
     public static void Unpack1024(ReadOnlySpan<byte> packed, Span<uint> destination, int bitWidth)
     {
@@ -317,9 +446,14 @@ public sealed partial class FastLanesBitUnpacker : IFastLanesBitUnpacker
             throw new ArgumentException("Destination span must have at least 1024 elements.", nameof(destination));
 
         int sliceBytes = (16 * bitWidth + 7) >> 3;
+        int requiredBytes = checked(64 * sliceBytes);
+        if (packed.Length < requiredBytes)
+            throw new ArgumentException($"Packed buffer is too short. Required: {requiredBytes}, Actual: {packed.Length}", nameof(packed));
+
         for (int i = 0; i < 64; i++)
         {
             Unpack16(packed.Slice(i * sliceBytes), destination.Slice(i * 16, 16), bitWidth);
         }
     }
+#endif
 }

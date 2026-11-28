@@ -4,11 +4,19 @@ using System;
 using System.Runtime.CompilerServices;
 using System.Threading;
 
+/// <summary>
+/// Supported buffer pool page sizes.
+/// </summary>
 public enum PageTier : int
 {
-    Small = 4096,         // 4 KB small pages
-    Medium = 65536,      // 64 KB medium pages
-    Huge = 2097152       // 2 MB huge pages
+    /// <summary>4 KB small pages (supported by <see cref="SlottedPage"/>).</summary>
+    Small = 4096,
+
+    /// <summary>64 KB medium pages.</summary>
+    Medium = 65536,
+
+    /// <summary>2 MB huge pages.</summary>
+    Huge = 2097152
 }
 
 /// <summary>
@@ -22,26 +30,46 @@ public struct FrameLatch
 {
     private int _state;
 
-    private const int ReaderMask = 0x3FFFFFFF;
+    internal const int ReaderMask = 0x3FFFFFFF;
     private const int WriterBit = 1 << 30;
     private const int DirtyBit = unchecked((int)0x80000000);
 
-    public readonly bool IsDirty => (_state & DirtyBit) != 0;
-    public readonly bool IsLockedExclusive => (_state & WriterBit) != 0;
-    public readonly int ReaderCount => _state & ReaderMask;
+    internal FrameLatch(int initialState)
+    {
+        _state = initialState;
+    }
 
+    /// <summary>Gets whether the dirty flag bit is set.</summary>
+    public readonly bool IsDirty => (Volatile.Read(ref Unsafe.AsRef(in _state)) & DirtyBit) != 0;
+
+    /// <summary>Gets whether the exclusive writer lock bit is set.</summary>
+    public readonly bool IsLockedExclusive => (Volatile.Read(ref Unsafe.AsRef(in _state)) & WriterBit) != 0;
+
+    /// <summary>Gets the current number of active shared readers.</summary>
+    public readonly int ReaderCount => Volatile.Read(ref Unsafe.AsRef(in _state)) & ReaderMask;
+
+    /// <summary>
+    /// Atomically sets the dirty bit on this latch.
+    /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void MarkDirty()
     {
         Interlocked.Or(ref _state, DirtyBit);
     }
 
+    /// <summary>
+    /// Atomically clears the dirty bit on this latch.
+    /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ClearDirty()
     {
         Interlocked.And(ref _state, ~DirtyBit);
     }
 
+    /// <summary>
+    /// Attempts to acquire a shared reader lock without spinning for an exclusive writer.
+    /// </summary>
+    /// <returns><c>true</c> if acquired; <c>false</c> if exclusively locked or saturated.</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryAcquireShared()
     {
@@ -49,9 +77,8 @@ public struct FrameLatch
         while (true)
         {
             int current = Volatile.Read(ref _state);
-            if ((current & WriterBit) != 0)
+            if ((current & WriterBit) != 0 || (current & ReaderMask) == ReaderMask)
             {
-                // Write locked
                 return false;
             }
 
@@ -65,6 +92,10 @@ public struct FrameLatch
         }
     }
 
+    /// <summary>
+    /// Acquires a shared reader lock, spinning until any exclusive writer releases.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown if the shared reader count is saturated.</exception>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AcquireShared()
     {
@@ -72,6 +103,11 @@ public struct FrameLatch
         while (true)
         {
             int current = Volatile.Read(ref _state);
+            if ((current & ReaderMask) == ReaderMask)
+            {
+                throw new InvalidOperationException("Frame latch shared reader count saturated.");
+            }
+
             if ((current & WriterBit) == 0)
             {
                 int next = current + 1;
@@ -84,6 +120,10 @@ public struct FrameLatch
         }
     }
 
+    /// <summary>
+    /// Releases one shared reader lock.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown if no shared readers are active.</exception>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ReleaseShared()
     {
@@ -106,6 +146,10 @@ public struct FrameLatch
         }
     }
 
+    /// <summary>
+    /// Attempts to acquire the exclusive writer lock without waiting.
+    /// </summary>
+    /// <returns><c>true</c> if acquired; <c>false</c> if readers or another writer hold the latch.</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public bool TryAcquireExclusive()
     {
@@ -119,6 +163,9 @@ public struct FrameLatch
         return Interlocked.CompareExchange(ref _state, next, current) == current;
     }
 
+    /// <summary>
+    /// Acquires the exclusive writer lock, spinning until all readers and prior writers release.
+    /// </summary>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void AcquireExclusive()
     {
@@ -138,6 +185,10 @@ public struct FrameLatch
         }
     }
 
+    /// <summary>
+    /// Releases the exclusive writer lock.
+    /// </summary>
+    /// <exception cref="InvalidOperationException">Thrown if the latch is not held exclusively.</exception>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public void ReleaseExclusive()
     {

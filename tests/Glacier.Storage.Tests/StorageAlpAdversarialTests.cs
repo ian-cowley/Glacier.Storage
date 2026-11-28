@@ -1,4 +1,5 @@
 using System;
+using System.Buffers.Binary;
 using System.IO;
 using Glacier.Storage.Encoding;
 using Xunit;
@@ -132,5 +133,72 @@ public class StorageAlpAdversarialTests
         float[] dest = new float[10];
 
         Assert.Throws<InvalidDataException>(() => AlpCompressor.DecompressFloat(badMagic, dest));
+    }
+
+    [Fact]
+    public void StorageAlp_InvalidHeaderBounds_ThrowsInvalidDataException()
+    {
+        // 1. ReadHeader < 48 bytes
+        byte[] shortBuf = new byte[AlpCompressor.HeaderSize - 1];
+        Assert.Throws<InvalidDataException>(() => AlpCompressor.ReadHeader(
+            shortBuf, out _, out _, out _, out _, out _, out _, out _, out _, out _, out _, out _));
+
+        // 2. GetMaxCompressedLength negative / overflow
+        Assert.Throws<ArgumentOutOfRangeException>(() => AlpCompressor.GetMaxCompressedLength(-1, 4));
+        Assert.Throws<ArgumentOutOfRangeException>(() => AlpCompressor.GetMaxCompressedLength(10, 0));
+        Assert.Throws<OverflowException>(() => AlpCompressor.GetMaxCompressedLength(int.MaxValue, 8));
+
+        // 3. Codec negative originalCount
+        var codec = new AlpCompressionCodec();
+        Assert.Throws<ArgumentOutOfRangeException>(() => codec.Decompress(ReadOnlySpan<byte>.Empty, -1));
+        Assert.Throws<ArgumentOutOfRangeException>(() => codec.DecompressDouble(ReadOnlySpan<byte>.Empty, -1));
+
+        // Helper to build synthetic ALP header + payload
+        static byte[] BuildRawAlp(AlpCompressionMode mode, byte exp, byte bw, byte expR, byte bwR, ushort count, ushort exCount, int payloadBytes)
+        {
+            byte[] buf = new byte[AlpCompressor.HeaderSize + payloadBytes];
+            BinaryPrimitives.WriteUInt32LittleEndian(buf.AsSpan(0x00, 4), AlpCompressor.Magic);
+            buf[0x04] = (byte)mode;
+            buf[0x05] = exp;
+            buf[0x06] = bw;
+            buf[0x07] = expR;
+            buf[0x08] = bwR;
+            BinaryPrimitives.WriteUInt16LittleEndian(buf.AsSpan(0x0A, 2), count);
+            BinaryPrimitives.WriteUInt16LittleEndian(buf.AsSpan(0x0C, 2), exCount);
+            return buf;
+        }
+
+        float[] fDest = new float[8];
+        double[] dDest = new double[8];
+
+        // 4. AlpFloat invalid exp (> 18), bitWidth (> 64), exCount (> count), truncated, and idx >= count
+        Assert.Throws<InvalidDataException>(() => AlpCompressor.DecompressFloat(BuildRawAlp(AlpCompressionMode.AlpFloat, 19, 4, 0, 0, 4, 0, 16), fDest));
+        Assert.Throws<InvalidDataException>(() => AlpCompressor.DecompressFloat(BuildRawAlp(AlpCompressionMode.AlpFloat, 1, 65, 0, 0, 4, 0, 64), fDest));
+        Assert.Throws<InvalidDataException>(() => AlpCompressor.DecompressFloat(BuildRawAlp(AlpCompressionMode.AlpFloat, 1, 4, 0, 0, 4, 5, 64), fDest));
+        // Truncated stream with large count & tiny destination must throw InvalidDataException (not ArgumentException)
+        Assert.Throws<InvalidDataException>(() => AlpCompressor.DecompressFloat(BuildRawAlp(AlpCompressionMode.AlpFloat, 1, 8, 0, 0, 500, 0, 4), fDest));
+        // Out-of-bounds exception index (idx = 4 for count = 4) must throw InvalidDataException without mutating destination
+        byte[] badExFloat = BuildRawAlp(AlpCompressionMode.AlpFloat, 1, 0, 0, 0, 4, 1, 6);
+        BinaryPrimitives.WriteUInt16LittleEndian(badExFloat.AsSpan(AlpCompressor.HeaderSize, 2), 4);
+        Array.Fill(fDest, 123.5f);
+        Assert.Throws<InvalidDataException>(() => AlpCompressor.DecompressFloat(badExFloat, fDest));
+        Assert.Equal(123.5f, fDest[0]);
+
+        // 5. AlpDouble invalid bounds
+        Assert.Throws<InvalidDataException>(() => AlpCompressor.DecompressDouble(BuildRawAlp(AlpCompressionMode.AlpDouble, 19, 4, 0, 0, 4, 0, 16), dDest));
+        Assert.Throws<InvalidDataException>(() => AlpCompressor.DecompressDouble(BuildRawAlp(AlpCompressionMode.AlpDouble, 1, 65, 0, 0, 4, 0, 64), dDest));
+        Assert.Throws<InvalidDataException>(() => AlpCompressor.DecompressDouble(BuildRawAlp(AlpCompressionMode.AlpDouble, 1, 4, 0, 0, 4, 5, 64), dDest));
+        byte[] badExDouble = BuildRawAlp(AlpCompressionMode.AlpDouble, 1, 0, 0, 0, 4, 1, 10);
+        BinaryPrimitives.WriteUInt16LittleEndian(badExDouble.AsSpan(AlpCompressor.HeaderSize, 2), 99);
+        Assert.Throws<InvalidDataException>(() => AlpCompressor.DecompressDouble(badExDouble, dDest));
+
+        // 6. AlpRdDouble invalid bounds
+        Assert.Throws<InvalidDataException>(() => AlpCompressor.DecompressDouble(BuildRawAlp(AlpCompressionMode.AlpRdDouble, 0, 4, 19, 4, 4, 0, 16), dDest));
+        Assert.Throws<InvalidDataException>(() => AlpCompressor.DecompressDouble(BuildRawAlp(AlpCompressionMode.AlpRdDouble, 0, 65, 2, 4, 4, 0, 64), dDest));
+        Assert.Throws<InvalidDataException>(() => AlpCompressor.DecompressDouble(BuildRawAlp(AlpCompressionMode.AlpRdDouble, 0, 4, 2, 65, 4, 0, 64), dDest));
+        Assert.Throws<InvalidDataException>(() => AlpCompressor.DecompressDouble(BuildRawAlp(AlpCompressionMode.AlpRdDouble, 0, 4, 2, 4, 4, 5, 64), dDest));
+        byte[] badExRd = BuildRawAlp(AlpCompressionMode.AlpRdDouble, 0, 0, 2, 0, 4, 1, 10);
+        BinaryPrimitives.WriteUInt16LittleEndian(badExRd.AsSpan(AlpCompressor.HeaderSize, 2), 4);
+        Assert.Throws<InvalidDataException>(() => AlpCompressor.DecompressDouble(badExRd, dDest));
     }
 }

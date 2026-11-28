@@ -2,9 +2,11 @@ namespace Glacier.Storage.Wal;
 
 using System;
 using System.Runtime.CompilerServices;
+#if !USE_LOCAL_FORMATS
 using System.Runtime.InteropServices;
 using System.Runtime.Intrinsics.Arm;
 using System.Runtime.Intrinsics.X86;
+#endif
 
 /// <summary>
 /// Hardware-accelerated CRC-32C (Castagnoli, polynomial 0x82F63B78) calculator.
@@ -12,6 +14,26 @@ using System.Runtime.Intrinsics.X86;
 /// </summary>
 public static class Crc32c
 {
+#if USE_LOCAL_FORMATS
+    /// <summary>
+    /// Computes the Castagnoli CRC-32C checksum for <paramref name="data"/>.
+    /// </summary>
+    /// <param name="data">The input byte span.</param>
+    /// <returns>The computed 32-bit CRC-32C checksum.</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static uint Compute(ReadOnlySpan<byte> data) =>
+        Glacier.Formats.Hashing.Crc32c.Compute(data);
+
+    /// <summary>
+    /// Updates an in-progress unfinalized CRC-32C state with additional <paramref name="data"/> bytes.
+    /// </summary>
+    /// <param name="crc">The running pre-inverted CRC-32C state (initial value <c>0xFFFFFFFF</c>).</param>
+    /// <param name="data">The additional input byte span.</param>
+    /// <returns>The updated running CRC-32C state.</returns>
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public static uint Update(uint crc, ReadOnlySpan<byte> data) =>
+        Glacier.Formats.Hashing.Crc32c.Update(crc, data);
+#else
     private static readonly uint[] Table = InitializeTable();
 
     private static uint[] InitializeTable()
@@ -30,12 +52,23 @@ public static class Crc32c
         return table;
     }
 
+    /// <summary>
+    /// Computes the Castagnoli CRC-32C checksum for <paramref name="data"/>.
+    /// </summary>
+    /// <param name="data">The input byte span.</param>
+    /// <returns>The computed 32-bit CRC-32C checksum.</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static uint Compute(ReadOnlySpan<byte> data)
     {
         return Update(0xFFFFFFFF, data) ^ 0xFFFFFFFF;
     }
 
+    /// <summary>
+    /// Updates an in-progress unfinalized CRC-32C state with additional <paramref name="data"/> bytes.
+    /// </summary>
+    /// <param name="crc">The running pre-inverted CRC-32C state (initial value <c>0xFFFFFFFF</c>).</param>
+    /// <param name="data">The additional input byte span.</param>
+    /// <returns>The updated running CRC-32C state.</returns>
     [MethodImpl(MethodImplOptions.AggressiveInlining)]
     public static uint Update(uint crc, ReadOnlySpan<byte> data)
     {
@@ -104,4 +137,5 @@ public static class Crc32c
         }
         return crc;
     }
+#endif
 }
