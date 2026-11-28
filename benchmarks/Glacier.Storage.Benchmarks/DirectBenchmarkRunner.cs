@@ -8,6 +8,7 @@ using Glacier.DocTree.GDoc;
 using Glacier.Formats.Arrow;
 using Glacier.Formats.Parquet;
 using Glacier.Storage.BufferPool;
+using Glacier.Storage.Encoding;
 using Glacier.Storage.Wal;
 
 public static class DirectBenchmarkRunner
@@ -31,6 +32,9 @@ public static class DirectBenchmarkRunner
 
         Console.WriteLine("\n[6] Running .gdoc Contiguous Memory-Mapped Traversal & SIMD Cosine Search...");
         RunGDocBenchmark();
+
+        Console.WriteLine("\n[7] Running Lossless ALP Float/Double Compression Benchmark (1,000,000 values)...");
+        RunAlpBenchmark();
 
         Console.WriteLine("\n================================================================================");
         Console.WriteLine("All benchmarks completed successfully.");
@@ -210,5 +214,52 @@ public static class DirectBenchmarkRunner
 
         double searchesSec = searchIters / sw.Elapsed.TotalSeconds;
         Console.WriteLine($"  SIMD 768-D Vector Cosine Search (1,000 nodes): {sw.ElapsedMilliseconds} ms for {searchIters} queries -> {searchesSec:N0} queries/sec");
+    }
+
+    private static void RunAlpBenchmark()
+    {
+        const int blockCount = 16;
+        const int blockSize = 62_500;
+        const int totalValues = blockCount * blockSize;
+
+        var floatBlock = new float[blockSize];
+        var doubleBlock = new double[blockSize];
+        for (int i = 0; i < blockSize; i++)
+        {
+            floatBlock[i] = 100.0f + (i % 1000) * 0.25f;
+            doubleBlock[i] = 1000.0 + (i % 1000) * 0.125;
+        }
+
+        var floatDst = new byte[AlpCompressor.GetMaxCompressedLength(blockSize, sizeof(float))];
+        var floatOut = new float[blockSize];
+        var doubleDst = new byte[AlpCompressor.GetMaxCompressedLength(blockSize, sizeof(double))];
+        var doubleOut = new double[blockSize];
+
+        int fLen = AlpCompressor.CompressFloat(floatBlock, floatDst);
+        AlpCompressor.DecompressFloat(floatDst.AsSpan(0, fLen), floatOut);
+        int dLen = AlpCompressor.CompressDouble(doubleBlock, doubleDst);
+        AlpCompressor.DecompressDouble(doubleDst.AsSpan(0, dLen), doubleOut);
+
+        var sw = Stopwatch.StartNew();
+        for (int b = 0; b < blockCount; b++) fLen = AlpCompressor.CompressFloat(floatBlock, floatDst);
+        sw.Stop();
+        double fCompThroughput = (totalValues / 1_000_000.0) / sw.Elapsed.TotalSeconds;
+
+        sw.Restart();
+        for (int b = 0; b < blockCount; b++) AlpCompressor.DecompressFloat(floatDst.AsSpan(0, fLen), floatOut);
+        sw.Stop();
+        double fDecompThroughput = (totalValues / 1_000_000.0) / sw.Elapsed.TotalSeconds;
+        Console.WriteLine($"  ALP Float32 (1M vals): Compress {fCompThroughput:N1} M vals/s (ratio {(double)(blockSize * sizeof(float)) / fLen:N2}x) | Decompress {fDecompThroughput:N1} M vals/s");
+
+        sw.Restart();
+        for (int b = 0; b < blockCount; b++) dLen = AlpCompressor.CompressDouble(doubleBlock, doubleDst);
+        sw.Stop();
+        double dCompThroughput = (totalValues / 1_000_000.0) / sw.Elapsed.TotalSeconds;
+
+        sw.Restart();
+        for (int b = 0; b < blockCount; b++) AlpCompressor.DecompressDouble(doubleDst.AsSpan(0, dLen), doubleOut);
+        sw.Stop();
+        double dDecompThroughput = (totalValues / 1_000_000.0) / sw.Elapsed.TotalSeconds;
+        Console.WriteLine($"  ALP Float64 (1M vals): Compress {dCompThroughput:N1} M vals/s (ratio {(double)(blockSize * sizeof(double)) / dLen:N2}x) | Decompress {dDecompThroughput:N1} M vals/s");
     }
 }

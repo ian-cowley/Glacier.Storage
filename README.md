@@ -1,84 +1,24 @@
 ![Glacier.Storage Banner](assets/banner.jpg)
 
-# 🗄️ Glacier.Storage
+# Glacier.Storage
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 [![.NET 10](https://img.shields.io/badge/.NET-10.0-purple.svg)](https://dotnet.microsoft.com/)
 [![Native AOT](https://img.shields.io/badge/Native%20AOT-Ready-brightgreen.svg)](https://learn.microsoft.com/dotnet/core/deploying/native-aot/)
-[![Ecosystem](https://img.shields.io/badge/Glacier-Ecosystem-blue)](https://github.com/ian-cowley)
 [![Website](https://img.shields.io/badge/Website-glaciersoftware.dev-66fcf1.svg)](https://glaciersoftware.dev/)
-[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-Support-orange.svg?logo=buy-me-a-coffee)](https://buymeacoffee.com/glaciersoftware)
 
-> **Pillar 12 of the Glacier .NET 10 Ecosystem**: Pure managed C# zero-allocation ACID storage engine kernel featuring a multi-tiered Clock-Pro/2Q unmanaged buffer pool, double-buffered group-commit write-ahead logging (WAL), `SlottedPage` tuple storage, ALP floating-point compression, FastLanes SIMD bit-unpacking, and transactional `TableStore` backed by `Glacier.Formats` (Glacier Compact Columnar IPC v1 & Parquet v1).
-> **Zero native C dependencies (`e_sqlite3.dll` eliminated); depends on pure-managed `Glacier.Formats`.**
+`Glacier.Storage` is a managed embedded storage kernel for .NET 10 with no native C dependencies (`e_sqlite3.dll` is not required). It pairs a multi-tier unmanaged buffer pool and group-commit write-ahead log (`WAL`) with slotted pages, lossless ALP float compression, FastLanes SIMD bit-unpacking, and transactional `TableStore` exports to Arrow IPC and Parquet via `Glacier.Formats`.
 
-```text
-========================================================================================================
-  GLACIER.STORAGE ARCHITECTURE & CAPABILITIES (.NET 10)
-========================================================================================================
-  Buffer Pool       : 64-byte aligned unmanaged slabs (4KB Small, 64KB Medium, 2MB Huge), Clock-Pro & 2Q
-  Frame Concurrency : Atomic FrameLatch (30-bit reader count, writer lock, dirty bit) + Per-Frame State
-  Slotted Page      : Variable-length tuple directory up to 65,535 bytes (PageTier.Small 4KB)
-  ACID WAL          : Double-buffered lock-split group-commit engine + RandomAccess I/O + CRC-32C
-  ALP Encoding      : Lossless IEEE-754 float/double compression (ALP / ALP_RD) + FastLanes unpacking
-  TableStore        : IBufferPool-paged transactional batches with Glacier Compact IPC v1 & Parquet v1
-========================================================================================================
+It is built for embedded analytical tables, local checkpoints, and column stores that need predictable unmanaged page caching, crash recovery, and Native AOT builds in pure C#.
+
+## Install
+
+```powershell
+dotnet add package Glacier.Storage
 ```
 
----
+## Quick Start
 
-## 🏛️ System Architecture
-
-<p align="center">
-  <img src="assets/architecture.jpg" alt="Glacier.Storage Architecture Blueprint" width="100%" />
-</p>
-
-```
-                                Glacier.Storage Pipeline
- ┌────────────────────────────────────────────────────────────────────────────────────────┐
- │                             Glacier.Storage Public Facade                              │
- │                    TableStore (IBufferPool + IWalTransactionEngine)                    │
- │             Integrates Glacier.Formats (Compact Columnar IPC v1 & Parquet v1)          │
- └──────────────┬────────────────────────────┬────────────────────────────┬───────────────┘
-                │                            │                            │
- ┌──────────────▼─────────────┐ ┌────────────▼─────────────┐ ┌───────────▼──────────────┐
- │  Glacier.Storage.Encoding  │ │Glacier.Storage.BufferPool│ │   Glacier.Storage.Wal    │
- │ • ALP & ALP_RD Float/Double│ │ • Clock-Pro / 2Q Cache   │ │ • Group-Commit Engine    │
- │ • FastLanesBitUnpacker     │ │ • Atomic FrameLatch/Pin  │ │ • Double-Buffered Flush  │
- │   (via Glacier.Formats)    │ │ • 4KB/64KB/2MB Slabs     │ │ • Hardware CRC-32C       │
- │ • Zone-Map Min/Max Headers │ │ • SlottedPage (<= 64KB-) │ │ • Pooled Crash Recovery  │
- └────────────────────────────┘ └──────────────────────────┘ └──────────────────────────┘
-```
-
----
-
-## 🚀 Key Subsystems
-
-### 1. Transactional `TableStore` (`Glacier.Storage`)
-- **Buffer-Pool-Backed Batch Storage**: Commits chunked record batch payloads directly into `IBufferPool` pages (`PagePin` exclusive writes and shared streaming reads), with explicit `leaveBufferPoolOpen` / `leaveWalOpen` ownership tracking.
-- **WAL Replay & Recovery**: Replays committed `Glacier.Formats.Arrow` (**Glacier Compact Columnar IPC v1**) payloads on startup while isolating aborted or uncommitted transactions.
-- **Columnar Export**: Streams committed batches directly from `IBufferPool` pages via `ExportToArrowIpc` (Glacier Compact Columnar IPC v1) or exports multi-RowGroup Parquet v1 files via `ExportToParquet` (`Glacier.Formats.Parquet`).
-
-### 2. Multi-Tier Buffer Pool (`Glacier.Storage.BufferPool`)
-- **Multi-Tier Page Slabs**: 4 KB (`PageTier.Small`), 64 KB (`PageTier.Medium`), and 2 MB (`PageTier.Huge`) slabs allocated with 64-byte native alignment and `RandomAccess` disk I/O (or `ArrayPool<byte>` in-memory backing).
-- **Clock-Pro & 2Q Adaptive Replacement**: Separates Cold, Hot, and non-resident Test history pages while guaranteeing eviction safety with atomic `FrameState` (`Empty`/`Loading`/`Resident`/`Evicting`) and inflight load/eviction deduplication.
-- **Non-Blocking Frame Latches & `PagePin`**: Atomic 32-bit `FrameLatch` (30-bit shared reader count with saturation guard, 1-bit exclusive lock, 1-bit dirty flag) paired with mode-aware `PagePin` disposal.
-- **Slotted Page Directory**: Variable-length tuple storage (`SlottedPage`) for pages up to `65,535` bytes (`PageTier.Small`), with corrupt-header bounds validation.
-
-### 3. ACID Write-Ahead Log (`Glacier.Storage.Wal`)
-- **Lock-Split Group Commit**: `WalTransactionEngine` swaps `_activeBuffer` and `_flushBuffer` in O(1) under `_appendLock` and performs disk writes + `RandomAccess.FlushToDisk` outside `_appendLock` under `_flushLock`.
-- **Hardware-Accelerated CRC-32C**: Delegates to `Glacier.Formats.Hashing.Crc32c` (SSE4.2 / ARM64 intrinsics with table fallback) when built locally, with standalone fallback for NuGet builds.
-- **Crash Recovery (`WalRecovery`)**: Uses `ArrayPool<byte>` + `RandomAccess.Read` / `ReadAtLeast` to scan arbitrary-length logs without full-file heap allocations and cleanly stops at torn tails.
-
-### 4. Lossless Floating-Point Encoding (`Glacier.Storage.Encoding`)
-- **ALP & ALP_RD Compression (`AlpCompressor`)**: Bit-exact lossless IEEE-754 `float` and `double` block compression with embedded 64-bit zone-map min/max metadata and strict header/index/truncation validation.
-- **FastLanes Bit-Unpacking**: `FastLanesBitUnpacker` delegates to canonical `Glacier.Formats.Encoding.FastLanesBitUnpacker` (AVX-512 / AVX2 / scalar) when built locally.
-
----
-
-## 💻 Quickstart Examples
-
-### Transactional `TableStore` with `Glacier.Formats` IPC & Parquet Export
 ```csharp
 using Glacier.Formats.Arrow;
 using Glacier.Formats.Parquet;
@@ -92,93 +32,46 @@ var schema = new ArrowSchema(new[]
 
 using var store = new TableStore("./my_table", schema);
 TxId tx = store.BeginTransaction();
-
-var col0 = new ArrowColumn(schema.GetField(0), rowCount, 0, default, default, idBytes);
-var col1 = new ArrowColumn(schema.GetField(1), rowCount, 0, default, default, metricBytes);
-var batch = new ArrowRecordBatch(schema, rowCount, new[] { col0, col1 });
-
-store.AppendBatch(tx, batch);
+store.AppendBatch(tx, recordBatch);
 await store.CommitTransactionAsync(tx);
 
 store.ExportToParquet("data.parquet", CompressionCodec.Snappy);
 ```
 
-### Buffer Pool with `PageTier.Small` & `SlottedPage`
-```csharp
-using Glacier.Storage;
-using Glacier.Storage.BufferPool;
+## What You Can Do
 
-// Initialize 4KB small-page buffer pool with Clock-Pro (SlottedPage supports <= 65,535 bytes)
-using var pool = new BufferPool(poolSize: 128, PageTier.Small);
+- **Commit & export batches (`TableStore`):** Append `ArrowRecordBatch` data under WAL transactions (`BeginTransaction`, `AppendBatch`, `CommitTransactionAsync`), replay committed logs automatically on open, and stream to Arrow IPC (`ExportToArrowIpc`) or Parquet (`ExportToParquet`).
+- **Manage unmanaged pages (`BufferPool` & `SlottedPage`):** Pin 4 KB (`PageTier.Small`), 64 KB (`PageTier.Medium`), and 2 MB (`PageTier.Huge`) 64-byte aligned slabs with `ClockProPolicy` or `TwoQueuePolicy`, atomic shared/exclusive `FrameLatch` locks, and variable-length tuple storage in `SlottedPage`.
+- **Guarantee crash durability (`WalTransactionEngine` & `WalRecovery`):** Log `TxId` records verified by hardware `Crc32c`, flush via lock-split double buffering, and recover cleanly past torn tails.
+- **Compress floating-point columns (`AlpCompressor` & `FastLanesBitUnpacker`):** Encode lossless IEEE-754 `float` and `double` blocks (up to `65,535` values) using standard ALP / `ALP_RD` modes with 64-bit zone-map bounds and SIMD bit-unpacking.
 
-// Allocate new page
-PageId pageId = pool.AllocatePage();
+## Platform & Compatibility
 
-// Pin page with exclusive write lock
-using (PagePin pin = pool.PinPage(pageId, LockMode.Exclusive))
-{
-    // Write directly into 4KB unmanaged memory span
-    SlottedPage.Initialize(pin.Data, pageId);
-    SlottedPage.TryInsertRecord(pin.Data, "RecordPayload"u8, out ushort slot);
-    pin.MarkDirty();
-} // Automatically releases Exclusive latch and unpins on dispose
-```
+`Glacier.Storage` targets `.NET 10` (`net10.0`) with Native AOT readiness, relying strictly on managed `Glacier.Formats` without external native SQLite or C++ runtimes.
 
-### Transactional ACID WAL with Group Commit
-```csharp
-using Glacier.Storage;
-using Glacier.Storage.Wal;
+## Benchmarks
 
-using var logStream = new FileStream("transactions.wal", FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.ReadWrite);
-using var wal = new WalTransactionEngine(logStream, bufferCapacity: 65536, groupCommitIntervalMs: 2);
+Measured on this workstation (`.NET 10.0.15` Release x64, `AMD Ryzen AI 9 HX 370`):
 
-// Begin transaction
-TxId txId = wal.BeginTransaction();
+| Subsystem | Workload | Measured Result |
+| :--- | :--- | ---: |
+| `VectorizedBitUnpacker.Unpack` (4-bit) | 100,000,000 values | 16 ms (6,008.6 M values/s) |
+| `SnappyCodec` Compress / Decompress | 5 x 10 MB | 21,820.7 MB/s / 3,690.5 MB/s |
+| `ArrowStreamWriter` / `ArrowStreamReader` | 500,000 rows | 4 ms write / 9 ms read |
+| `BufferPool.PinPage` / Dispose | 1,000,000 pins | 155 ms (6.43 M ops/s) |
+| `WalTransactionEngine` Group Commit | 50,000 transactions | 18 ms (2,740.9 K tx/s) |
+| `AlpCompressor` Float32 / Float64 | 1,000,000 values | 78.6 M / 117.1 M vals/s compress; 197.4 M / 183.7 M vals/s decompress |
 
-// Append update records (hardware CRC-32C verified)
-wal.LogRecord(txId, "UPDATE inventory SET stock = 42"u8);
+See [docs/benchmarks.md](docs/benchmarks.md) for full details and reproduction commands.
 
-// Await group commit durability
-await wal.CommitAsync(txId);
-```
+## Documentation
 
-### Lossless ALP Float Compression
-```csharp
-using Glacier.Storage.Encoding;
+- [User Manual](docs/manual.md) — `TableStore`, `BufferPool`, `SlottedPage`, `WalTransactionEngine`, `WalRecovery`, `AlpCompressor`, and `FastLanesBitUnpacker`
+- [Architecture](docs/architecture.md) — Aligned slab tiers, `ClockProPolicy` / `TwoQueuePolicy` state machines, lock-split WAL flush, and ALP layout
+- [Benchmarks](docs/benchmarks.md) — Complete `--run-direct` benchmark table
 
-float[] samples = [10.25f, 10.50f, 10.75f, 11.00f];
-byte[] compressed = new byte[AlpCompressor.GetMaxCompressedLength(samples.Length, sizeof(float))];
-int bytesWritten = AlpCompressor.CompressFloat(samples, compressed);
+## License & Credits
 
-float[] restored = new float[samples.Length];
-int count = AlpCompressor.DecompressFloat(compressed.AsSpan(0, bytesWritten), restored);
-```
+Licensed under the [MIT License](LICENSE).
 
----
-
-## 🔒 Security & Quality Standards
-- **Zero Native Dependencies**: 100% managed C# .NET 10 code, Native AOT trim-safe, backed by pure-managed `Glacier.Formats` (no `e_sqlite3.dll` or native C libraries).
-- **Zero Secrets Policy**: Fully compliant with `AGENTS.md`. Automated verification via `glacier security-check Glacier.Storage`.
-- **Comprehensive Test Suite**: Unit, concurrency, adversarial bounds, and scalar-fallback tests covering `BufferPool` miss/eviction races, `FrameLatch` saturation, `SlottedPage` bounds, `WalTransactionEngine` lock-split group commit & disposal, `WalRecovery`, `TableStore` ownership & `IBufferPool` paging, `AlpCompressor` header/index bounds, and `FastLanesBitUnpacker` SIMD/scalar parity.
-
----
-
-## Credits
-
-Developed by **Ian Cowley** and **Antigravity (Google DeepMind)**.
-
----
-
-## 📄 License
-This project is licensed under the [MIT License](LICENSE). Copyright (c) 2026 Ian Cowley.
-
----
-
-## ❄️ Glacier Ecosystem & Support
-
-Part of the **[Glacier Ecosystem](https://glaciersoftware.dev/)** — high-performance, zero-allocation developer tooling and data engines natively built for modern C# and .NET 10.
-
-* 🌐 **Website & Documentation**: [glaciersoftware.dev](https://glaciersoftware.dev/)
-* ☕ **Buy Me a Coffee**: [buymeacoffee.com/glaciersoftware](https://buymeacoffee.com/glaciersoftware)
-* ❤️ **GitHub Sponsors**: [github.com/sponsors/ian-cowley](https://github.com/sponsors/ian-cowley)
-* 🐙 **All Repositories**: [github.com/ian-cowley](https://github.com/ian-cowley)
+Developed by Ian Cowley, Antigravity (Google DeepMind) and Claude.
